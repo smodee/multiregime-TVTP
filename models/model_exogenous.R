@@ -20,7 +20,6 @@ source("helpers/parameter_transforms.R")
 #' @param init_trans Initial transition probabilities for the latent process
 #' @param A Exogenous factor weights, one for each transition probability
 #' @param X_Exo Exogenous process that drives transition probability changes
-#' @param burn_in Number of burn-in observations to discard (default: 100)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
 #' Simulates data from a regime switching model where transition probabilities
@@ -35,7 +34,7 @@ source("helpers/parameter_transforms.R")
 #' A_true <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)
 #' X_Exo <- rnorm(1000)  # Generate exogenous process
 #' data_sim <- dataexoCD(10, 1000, mu_true, sigma2_true, init_trans_true, A_true, X_Exo)
-dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo, burn_in = 100) {
+dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo) {
   # Ensure that means and variances have been provided for all regimes
   if (length(mu) != length(sigma2)) {
     stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
@@ -46,7 +45,7 @@ dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo, burn_in = 100) {
   n_transition <- K*(K-1)
   
   # Check that X_Exo is long enough
-  if (length(X_Exo) < N + burn_in) {
+  if (length(X_Exo) < N) {
     stop("Error: Exogenous variable series is too short for the requested simulation length.")
   }
   
@@ -68,18 +67,17 @@ dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo, burn_in = 100) {
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
   
   for (i in 1:M) {
-    # Initialize all data structures including burn-in period
-    total_length <- N + burn_in
-    eta <- matrix(0, nrow=K, ncol=total_length)     # Likelihood of each regime
-    tot_lik <- numeric(total_length)                # Total likelihood
-    X_t <- matrix(0, nrow=K, ncol=total_length)     # Filtered probabilities after observation
-    X_tlag <- matrix(0, nrow=K, ncol=total_length)  # Predicted probabilities before observation
-    S <- numeric(total_length)                      # Latent state
-    y.sim <- numeric(total_length)                  # Random increments according to state
+    # Initialize all data structures
+    eta <- matrix(0, nrow=K, ncol=N)     # Likelihood of each regime
+    tot_lik <- numeric(N)                # Total likelihood
+    X_t <- matrix(0, nrow=K, ncol=N)     # Filtered probabilities after observation
+    X_tlag <- matrix(0, nrow=K, ncol=N)  # Predicted probabilities before observation
+    S <- numeric(N)                      # Latent state
+    y.sim <- numeric(N)                  # Random increments according to state
     
     # Initialize f values for transition probabilities and convert to valid probabilities
-    f <- matrix(0, nrow=n_transition, ncol=total_length)
-    p_trans <- matrix(0, nrow=n_transition, ncol=total_length)
+    f <- matrix(0, nrow=n_transition, ncol=N)
+    p_trans <- matrix(0, nrow=n_transition, ncol=N)
     
     # Initial state probabilities (uniform distribution)
     X_t[,1] <- rep(1/K, K)
@@ -89,7 +87,7 @@ dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo, burn_in = 100) {
     p_trans_raw <- logistic(f[,1])
     p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
     
-    for (t in 1:(total_length-1)) {
+    for (t in 1:(N-1)) {
       # Generate predicted probabilities
       Pmatrix <- transition_matrix(p_trans[,t], check_validity = FALSE)
       X_tlag[,t] <- Pmatrix %*% X_t[,t]
@@ -115,13 +113,13 @@ dataexoCD <- function(M, N, mu, sigma2, init_trans, A, X_Exo, burn_in = 100) {
     }
     
     # For the last time point
-    Pmatrix <- transition_matrix(p_trans[,total_length-1], check_validity = FALSE)
-    X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
-    S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
-    y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
+    Pmatrix <- transition_matrix(p_trans[,N-1], check_validity = FALSE)
+    X_tlag[,N] <- Pmatrix %*% X_t[,N-1]
+    S[N] <- sample(1:K, 1, prob=X_tlag[,N])
+    y.sim[N] <- rnorm(1, mu[S[N]], sqrt(sigma2[S[N]]))
     
-    # Remove burn-in and save the simulation run in the data matrix
-    data[i,] <- y.sim[(burn_in+1):total_length]
+    # Save the simulation run in the data matrix
+    data[i,] <- y.sim
   }
   
   return(data)
