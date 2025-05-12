@@ -30,15 +30,16 @@ set.seed(123)
 
 # Set up parameters
 K <- 3  # Number of regimes
-M <- 10  # Number of simulation paths
-N <- 1000  # Length of each simulation path
-B <- 100  # Burn-in period
+M <- 20  # Number of simulation paths
+N <- 1500  # Length of each simulation path
+B <- 200  # Burn-in period
 C <- 50  # Cut-off period
 
 # Set true parameter values
 mu_true <- c(-2, 1, 2)  # Different means for each regime
 sigma2_true <- c(0.05, 0.2, 0.6)  # Different variances for each regime
-init_trans_true <- rep(0.2, K*(K-1))  # Initial transition probabilities
+#init_trans_true <- rep(0.2, K*(K-1))  
+init_trans_true <- c(0.05,0.3,0.2,0.1,0.19,0.15) # Initial transition probabilities
 A_true <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)  # Autoregressive factor weights
 
 log_message("CONFIGURATION", sprintf(
@@ -230,26 +231,30 @@ par(mfrow = c(2, 2))
 
 # Means
 boxplot(param_estimates[,1:K], main = "Estimated Means",
-        names = paste0("mu", 1:K), col = "lightblue")
+        names = paste0("mu", 1:K), col = "lightblue",
+        ylim = range(c(param_estimates[,1:K], mu_true), na.rm = TRUE))
 points(1:K, mu_true, pch = 16, col = "red")
 legend("topright", legend = "True value", pch = 16, col = "red")
 
 # Variances
 boxplot(param_estimates[,(K+1):(2*K)], main = "Estimated Variances",
-        names = paste0("sigma2", 1:K), col = "lightgreen")
+        names = paste0("sigma2", 1:K), col = "lightgreen",
+        ylim = range(c(param_estimates[,(K+1):(2*K)], sigma2_true), na.rm = TRUE))
 points(1:K, sigma2_true, pch = 16, col = "red")
 
 # Transition probabilities
 n_trans <- K*(K-1)
 boxplot(param_estimates[,(2*K+1):(2*K+n_trans)], 
         main = "Estimated Transition Probabilities",
-        names = paste0("p", 1:n_trans), col = "lightyellow")
+        names = paste0("p", 1:n_trans), col = "lightyellow",
+        ylim = range(c(param_estimates[,(2*K+1):(2*K+n_trans)], init_trans_true), na.rm = TRUE))
 points(1:n_trans, init_trans_true, pch = 16, col = "red")
 
 # A coefficients
 boxplot(param_estimates[,(2*K+n_trans+1):(2*K+2*n_trans)], 
         main = "Estimated A Coefficients",
-        names = paste0("A", 1:n_trans), col = "lightpink")
+        names = paste0("A", 1:n_trans), col = "lightpink",
+        ylim = range(c(param_estimates[,(2*K+n_trans+1):(2*K+2*n_trans)], A_true), na.rm = TRUE))
 points(1:n_trans, A_true, pch = 16, col = "red")
 
 dev.off()
