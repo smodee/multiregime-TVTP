@@ -26,21 +26,21 @@ log_message <- function(section = NULL, message, quiet = FALSE) {
 }
 
 # Set random seed for reproducibility
-set.seed(123)
+set.seed(42)
 
 # Set up parameters
-K <- 3  # Number of regimes
-M <- 20  # Number of simulation paths
-N <- 1500  # Length of each simulation path
+M <- 10  # Number of simulation paths
+N <- 1000  # Length of each simulation path
 B <- 200  # Burn-in period
 C <- 50  # Cut-off period
 
 # Set true parameter values
-mu_true <- c(-2, 1, 2)  # Different means for each regime
-sigma2_true <- c(0.05, 0.2, 0.6)  # Different variances for each regime
+mu_true <- c(-2, -0.3, 2)  # Different means for each regime
+sigma2_true <- c(0.23, 0.17, 0.6)  # Different variances for each regime
 #init_trans_true <- rep(0.2, K*(K-1))  
-init_trans_true <- c(0.05,0.3,0.2,0.1,0.19,0.15) # Initial transition probabilities
-A_true <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)  # Autoregressive factor weights
+init_trans_true <- c(0.15,0.19,0.1,0.2,0.3,0.05) # Initial transition probabilities
+A_true <- c(-0.2, 0.2, -0.05, 0.05, -0.1, 0.1)  # Autoregressive factor weights
+K <- length(mu_true) # Number of regimes
 
 log_message("CONFIGURATION", sprintf(
   "K=%d regimes, M=%d paths, N=%d observations
