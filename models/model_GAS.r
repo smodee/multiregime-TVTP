@@ -570,6 +570,33 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   # Number of transition probabilities
   n_transition <- K*(K-1)
   
+  # Create default initial parameters if none provided
+  if (is.null(initial_params)) {
+    # Create sensible initial guesses based on data characteristics
+    y_mean <- mean(y, na.rm = TRUE)
+    y_sd <- sd(y, na.rm = TRUE)
+    
+    # Create regime means that span the range of the data
+    spread <- 2 * y_sd
+    mu_guess <- seq(y_mean - spread, y_mean + spread, length.out = K)
+    
+    # Create regime variances that increase with regime number
+    sigma2_guess <- seq(y_sd^2 * 0.5, y_sd^2 * 1.5, length.out = K)
+    
+    # Initialize transition probabilities, A and B coefficients
+    init_trans_guess <- rep(0.2, n_transition)
+    A_guess <- rep(0.1, n_transition)
+    B_guess <- rep(0.9, n_transition)
+    
+    initial_params <- c(mu_guess, sigma2_guess, init_trans_guess, A_guess, B_guess)
+    
+    if (verbose) {
+      cat("Generated initial parameter guesses:\n")
+      cat("Means:", round(mu_guess, 4), "\n")
+      cat("Variances:", round(sigma2_guess, 4), "\n")
+    }
+  }
+  
   # Create default bounds if none provided
   if (is.null(bounds)) {
     lower_bounds <- c(rep(-Inf, K),               # No bounds on means
@@ -1061,31 +1088,4 @@ format_time <- function(seconds) {
     minutes <- floor((seconds - hours * 3600) / 60)
     return(sprintf("%dh %dm", hours, minutes))
   }
-} default initial parameters if none provided
-  if (is.null(initial_params)) {
-    # Create sensible initial guesses based on data characteristics
-    y_mean <- mean(y, na.rm = TRUE)
-    y_sd <- sd(y, na.rm = TRUE)
-    
-    # Create regime means that span the range of the data
-    spread <- 2 * y_sd
-    mu_guess <- seq(y_mean - spread, y_mean + spread, length.out = K)
-    
-    # Create regime variances that increase with regime number
-    sigma2_guess <- seq(y_sd^2 * 0.5, y_sd^2 * 1.5, length.out = K)
-    
-    # Initialize transition probabilities, A and B coefficients
-    init_trans_guess <- rep(0.2, n_transition)
-    A_guess <- rep(0.1, n_transition)
-    B_guess <- rep(0.9, n_transition)
-    
-    initial_params <- c(mu_guess, sigma2_guess, init_trans_guess, A_guess, B_guess)
-    
-    if (verbose) {
-      cat("Generated initial parameter guesses:\n")
-      cat("Means:", round(mu_guess, 4), "\n")
-      cat("Variances:", round(sigma2_guess, 4), "\n")
-    }
-  }
-  
-  # Create
+}

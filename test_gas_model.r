@@ -77,7 +77,7 @@ cat("\nTest 1 Result:", ifelse(test1_pass, "PASS", "FAIL"), "\n")
 
 # Plot filtered probabilities
 if (test1_pass) {
-  pdf("test_results/test_gas_model_2regime.pdf", width = 10, height = 6)
+  pdf("results/test_gas_model_2regime.pdf", width = 10, height = 6)
   par(mfrow = c(2, 1))
   
   # Plot the data
@@ -90,7 +90,7 @@ if (test1_pass) {
   legend("topright", legend = c("Regime 1", "Regime 2"), col = c("blue", "red"), lty = 1)
   
   dev.off()
-  cat("Plots saved to test_results/test_gas_model_2regime.pdf\n")
+  cat("Plots saved to results/test_gas_model_2regime.pdf\n")
 }
 
 #-------------------------------------------------------------------------------
@@ -149,7 +149,7 @@ cat("\nTest 2 Result:", ifelse(test2_pass, "PASS", "FAIL"), "\n")
 
 # Plot filtered probabilities
 if (test2_pass) {
-  pdf("test_results/test_gas_model_3regime.pdf", width = 10, height = 8)
+  pdf("results/test_gas_model_3regime.pdf", width = 10, height = 8)
   par(mfrow = c(2, 1))
   
   # Plot the data
@@ -163,7 +163,7 @@ if (test2_pass) {
          col = c("blue", "green", "red"), lty = 1)
   
   dev.off()
-  cat("Plots saved to test_results/test_gas_model_3regime.pdf\n")
+  cat("Plots saved to results/test_gas_model_3regime.pdf\n")
 }
 
 #-------------------------------------------------------------------------------
@@ -233,7 +233,7 @@ cat("\nResults summary:\n")
 print(results)
 
 # Plot results
-pdf("test_results/test_gas_model_AB_impact.pdf", width = 10, height = 5)
+pdf("results/test_gas_model_AB_impact.pdf", width = 10, height = 5)
 par(mfrow = c(1, 2))
 
 # Plot impact on transition rate
@@ -267,7 +267,7 @@ legend("topleft", legend = paste("B =", unique(results$B)),
        col = 1:length(unique(results$B)), lty = 1, pch = 16)
 
 dev.off()
-cat("Plots saved to test_results/test_gas_model_AB_impact.pdf\n")
+cat("Plots saved to results/test_gas_model_AB_impact.pdf\n")
 
 # Check if test passes (at least we should see A and B impact dynamics)
 test3_pass <- length(unique(round(transition_rates, 2))) > 1 && 
@@ -317,7 +317,7 @@ test4_pass <- gas_aic < tvp_aic && gas_aic < const_aic
 cat("\nTest 4 Result:", ifelse(test4_pass, "PASS", "FAIL"), "\n")
 
 # Plot comparison
-pdf("test_results/test_gas_model_comparison.pdf", width = 12, height = 8)
+pdf("results/test_gas_model_comparison.pdf", width = 12, height = 8)
 plot_model_comparison(
   empirical_data = y,
   gas_model = gas_model,
@@ -325,7 +325,7 @@ plot_model_comparison(
   constant_model = const_model
 )
 dev.off()
-cat("Plots saved to test_results/test_gas_model_comparison.pdf\n")
+cat("Plots saved to results/test_gas_model_comparison.pdf\n")
 
 #-------------------------------------------------------------------------------
 # Test 5: Numeric Stability
@@ -481,8 +481,8 @@ all_pass <- all(all_tests)
 cat("\nOverall Result:", ifelse(all_pass, "ALL TESTS PASSED", "SOME TESTS FAILED"), "\n")
 
 # Create a directory for test results if it doesn't exist
-dir.create("test_results", showWarnings = FALSE)
+dir.create("results", showWarnings = FALSE)
 
 # Save summary to file
-write.csv(results_df, "test_results/gas_model_test_summary.csv", row.names = FALSE)
-cat("Summary saved to test_results/gas_model_test_summary.csv\n")
+write.csv(results_df, "results/gas_model_test_summary.csv", row.names = FALSE)
+cat("Summary saved to results/gas_model_test_summary.csv\n")
