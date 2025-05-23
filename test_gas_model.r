@@ -32,19 +32,35 @@ sigma2_true <- c(0.5, 1.0)
 init_trans_true <- c(0.2, 0.2)  # Off-diagonal elements for a 2x2 matrix
 A_true <- c(0.1, 0.1)          # Score scaling parameters
 B_true <- c(0.9, 0.9)          # Persistence parameters
+K = length(mu_true)
+n_transition = K*(K-1)
 
 # Generate data
 N <- 1000
 cat("Generating data with", N, "observations and 2 regimes...\n")
 data_sim <- dataGASCD(1, N, mu_true, sigma2_true, init_trans_true, A_true, B_true)
 
+# Create slightly perturbed initial values for estimation
+initial_params <- c(
+  mu_true * 0.9,          # Means
+  sigma2_true * 0.9,      # Variances
+  init_trans_true * 0.9,  # Transition probabilities
+  A_true * 0.9,           # A parameters
+  B_true * 0.9            # B parameters
+)
+
+# Verify parameter vector length
+expected_length <- 2*K + 3*n_transition
+cat("Parameter vector length:", length(initial_params), "Expected:", expected_length, "\n")
+
 # Estimate model
 cat("Estimating model parameters...\n")
 model_est <- estimate_gas_model(
   y = data_sim[1,],
-  K = 2,
+  K = K,
   B_burnin = 100,
   C = 50,
+  initial_params = initial_params,
   verbose = TRUE
 )
 
