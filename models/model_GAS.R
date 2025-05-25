@@ -161,9 +161,6 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
         }
       }
       
-      # Unscaled score is product of likelihood differences and probability impacts
-      score[,t] <- delta_like * g_vector
-      
       # Compute Fisher information scaling for better numerical stability
       # This is an approximation using Gauss-Hermite quadrature
       # The scaling is important for stability as described in Bazzi et al. (2017)
@@ -179,6 +176,9 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
       } else {
         g_normalized <- g_vector
       }
+      
+      # Unscaled score is product of likelihood differences and probability impacts
+      score[,t] <- delta_like * g_normalized
       
       # For simplicity in simulation, we're using a simplified scale factor
       # In a real implementation, this would involve integrating over the
@@ -341,9 +341,6 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
       }
     }
     
-    # Unscaled score
-    score[,t] <- delta_like * g_vector
-    
     # Normalize g_vector for numerical stability
     g_norm <- sqrt(sum(g_vector^2))
     if (g_norm > 0) {
@@ -352,16 +349,19 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
       g_normalized <- g_vector
     }
     
+    # Unscaled score
+    score[,t] <- delta_like * g_normalized
+    
     # Use a reasonable scaling factor
     scale_factor <- 1.0 / sqrt(1.0 + abs(delta_like))
     
     # Scaled score vector
     score_scaled[,t] <- scale_factor * score[,t]
-    
+
     # Update transition parameters using the score-driven dynamics
     # f_{t+1} = ω + A*s_t + B*(f_t - ω)
     f[,t+1] <- omega + A * score_scaled[,t] + B * (f[,t] - omega)
-    
+
     # Transform back to probability space
     p_trans_raw <- logistic(f[,t+1])
     p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, K)
