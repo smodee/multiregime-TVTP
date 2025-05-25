@@ -13,6 +13,91 @@ rm(list = ls())
 source("models/model_GAS.R")
 source("simulation/sim_GAS.R")
 
+# PATCHES - Override incorrect functions
+# Create a specific count_regime function for TVP
+count_regime_TVP <- function(par) {
+  # For TVP model, we have K means, K variances, K*(K-1) transition probabilities, K*(K-1) A coefficients
+  # Total: 2K + 2K*(K-1) = 2K + 2K^2 - 2K = 2K^2
+  # So we need to solve: 2K^2 = length(par)
+  # Therefore: K = sqrt(length(par)/2)
+  
+  K <- sqrt(length(par)/2)
+  
+  if (abs(K - round(K)) > 1e-10) {
+    stop(paste("The parameter vector length", length(par), 
+               "is not compatible with any valid number of regimes for TVP model.",
+               "Expected length is 2K^2.",
+               "For K=2: 8, K=3: 18, K=4: 32, etc."))
+  }
+  
+  return(round(K))
+}
+
+# Override transform_TVP to use the correct count function
+transform_TVP <- function(par) {
+  K <- count_regime_TVP(par)  # Use TVP-specific count function
+  
+  mu <- par[1:K]
+  sigma2 <- par[(K+1):(2*K)]
+  init_trans <- par[(2*K+1):(2*K + K*(K-1))]
+  A <- par[(2*K + K*(K-1) + 1):length(par)]
+  
+  # Check for invalid values
+  if (any(sigma2 <= 0)) {
+    stop("Variance parameters must be positive")
+  }
+  if (any(init_trans <= 0) || any(init_trans >= 1)) {
+    stop("Transition probabilities must be between 0 and 1")
+  }
+  
+  return(c(mu, log(sigma2), logit(init_trans), A))
+}
+
+# Override untransform_TVP to use the correct count function
+untransform_TVP <- function(par_t) {
+  K <- count_regime_TVP(par_t)  # Use TVP-specific count function
+  
+  mu <- par_t[1:K]
+  log_sigma2 <- par_t[(K+1):(2*K)]
+  logit_init_trans <- par_t[(2*K+1):(2*K + K*(K-1))]
+  A <- par_t[(2*K + K*(K-1) + 1):length(par_t)]
+  
+  return(c(mu, exp(log_sigma2), logistic(logit_init_trans), A))
+}
+
+# Also fix the generic count_regime to handle both cases
+count_regime <- function(par) {
+  # Try to determine which model based on parameter count
+  # For K regimes:
+  # - Constant model: K + K + K*(K-1) = K*(K+1)
+  # - TVP model: K + K + K*(K-1) + K*(K-1) = 2*K^2
+  # - Exogenous model: K + K + K*(K-1) + K*(K-1) = 2*K^2
+  # - GAS model: K + K + K*(K-1) + K*(K-1) + K*(K-1) = 3*K^2 - K
+  
+  len <- length(par)
+  
+  # Check if it's a constant model (K^2 + K = len)
+  K_const <- (-1 + sqrt(1 + 4*len))/2
+  if (abs(K_const - round(K_const)) < 1e-10) {
+    return(round(K_const))
+  }
+  
+  # Check if it's a TVP/Exogenous model (2K^2 = len)
+  K_tvp <- sqrt(len/2)
+  if (abs(K_tvp - round(K_tvp)) < 1e-10) {
+    return(round(K_tvp))
+  }
+  
+  # Check if it's a GAS model (3K^2 - K = len)
+  K_gas <- (1 + sqrt(1 + 12*len))/6
+  if (abs(K_gas - round(K_gas)) < 1e-10) {
+    return(round(K_gas))
+  }
+  
+  stop(paste("The parameter vector length", len, 
+             "is not compatible with any valid number of regimes."))
+}
+
 # Set random seed for reproducibility
 set.seed(42)
 
