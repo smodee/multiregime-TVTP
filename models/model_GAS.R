@@ -409,13 +409,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
 #' Applies log transformation to variances, logit to transition probabilities,
 #' and logit to A and B coefficient to make parameters suitable for unconstrained optimization.
 transform_GAS <- function(par) {
-  K <- sqrt(length(par)/3)  # For GAS model, we have K means, K variances, K*(K-1) transitions, K*(K-1) A's, and K*(K-1) B's
-  
-  if (K != as.integer(K)) {
-    stop("The parameter vector length is not compatible with any valid number of regimes.")
-  }
-  
-  K <- as.integer(K)
+  K <- count_regime_GAS(par)
   n_transition <- K*(K-1)
   
   mu <- par[1:K]
@@ -424,7 +418,6 @@ transform_GAS <- function(par) {
   A <- par[(2*K+n_transition+1):(2*K+2*n_transition)]
   B <- par[(2*K+2*n_transition+1):(2*K+3*n_transition)]
   
-  # Check for invalid values
   if (any(sigma2 <= 0)) {
     stop("Variance parameters must be positive")
   }
@@ -438,16 +431,7 @@ transform_GAS <- function(par) {
     stop("B parameters must be between 0 and 1")
   }
   
-  # Transform parameters to unconstrained space
-  mu_t <- mu  # No transformation for means
-  sigma2_t <- log(sigma2)  # Log transformation for variances
-  init_trans_t <- logit(init_trans)  # Logit transformation for probabilities
-  
-  # For A and B coefficients, we use logit transformation to map from (0,1) to (-Inf,Inf)
-  A_t <- logit(A)
-  B_t <- logit(B)
-  
-  return(c(mu_t, sigma2_t, init_trans_t, A_t, B_t))
+  return(c(mu, log(sigma2), logit(init_trans), logit(A), logit(B)))
 }
 
 #' Transform parameters from unconstrained space back to natural space for GAS model
@@ -458,13 +442,7 @@ transform_GAS <- function(par) {
 #' Applies exp transformation to log-variances, logistic to logit-probabilities,
 #' and logistic to logit-coefficients to convert back to naturally bounded parameters.
 untransform_GAS <- function(par_t) {
-  K <- sqrt(length(par_t)/3)  # For GAS model, we have K means, K variances, K*(K-1) transitions, K*(K-1) A's, and K*(K-1) B's
-  
-  if (K != as.integer(K)) {
-    stop("The parameter vector length is not compatible with any valid number of regimes.")
-  }
-  
-  K <- as.integer(K)
+  K <- count_regime_GAS(par_t)
   n_transition <- K*(K-1)
   
   mu_t <- par_t[1:K]
@@ -473,16 +451,7 @@ untransform_GAS <- function(par_t) {
   A_t <- par_t[(2*K+n_transition+1):(2*K+2*n_transition)]
   B_t <- par_t[(2*K+2*n_transition+1):(2*K+3*n_transition)]
   
-  # Transform parameters back to natural space
-  mu <- mu_t  # No transformation for means
-  sigma2 <- exp(sigma2_t)  # Exp transformation for variances
-  init_trans <- logistic(init_trans_t)  # Logistic transformation for probabilities
-  
-  # For A and B coefficients, we use logistic transformation to map from (-Inf,Inf) to (0,1)
-  A <- logistic(A_t)
-  B <- logistic(B_t)
-  
-  return(c(mu, sigma2, init_trans, A, B))
+  return(c(mu_t, exp(sigma2_t), logistic(init_trans_t), logistic(A_t), logistic(B_t)))
 }
 
 #' Count the number of regimes from a parameter vector for GAS model
@@ -490,15 +459,14 @@ untransform_GAS <- function(par_t) {
 #' @param par Parameter vector
 #' @return Number of regimes
 count_regime_GAS <- function(par) {
-  # For GAS model, we have K means, K variances, K*(K-1) transitions, K*(K-1) A's, and K*(K-1) B's
-  # So total length is K + K + K*(K-1) + K*(K-1) + K*(K-1) = 2K + 3K*(K-1) = 2K + 3K^2 - 3K = 3K^2 - K
-  # We need to solve for K: 3K^2 - K - length(par) = 0
-  
-  # Quadratic formula: K = (1 + sqrt(1 + 12*length(par)))/6
-  K <- (1 + sqrt(1 + 12*length(par)))/6
+  # For GAS model: 3K^2 - K - length(par) = 0
+  # Using quadratic formula: K = (1 + sqrt(1 + 12*length(par)))/6
+  discriminant <- 1 + 12*length(par)
+  K <- (1 + sqrt(discriminant))/6
   
   if (abs(K - round(K)) > 1e-10) {
-    stop("The parameter vector length is not compatible with any valid number of regimes.")
+    stop(paste("The parameter vector length", length(par), 
+               "is not compatible with any valid number of regimes."))
   }
   
   return(round(K))
