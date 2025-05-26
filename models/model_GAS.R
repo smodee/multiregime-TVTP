@@ -12,6 +12,7 @@
 source("helpers/utility_functions.R")
 source("helpers/transition_helpers.R")
 source("helpers/parameter_transforms.R")
+source("helpers/score_functions.R")
 
 #' Generate data from a score-driven regime-switching model (GAS)
 #'
@@ -23,11 +24,20 @@ source("helpers/parameter_transforms.R")
 #' @param A Scale parameter for score updates (sensitivity)
 #' @param B Persistence parameter for score updates (memory)
 #' @param burn_in Number of burn-in observations to discard (default: 100)
+#' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
+#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
+#' @param quad_sample_size Sample size for creating representative data for quadrature setup (default: 1000)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
 #' Simulates data from a regime switching model where transition probabilities
 #' are updated using score-driven dynamics based on the predictive likelihood.
 #' The update equation is f[t+1] = omega + A*s[t] + B*(f[t] - omega).
+#' 
+#' This implementation uses proper GAS score scaling following Bazzi et al. (2017)
+#' with Gauss-Hermite quadrature and Moore-Penrose pseudo-inverse scaling.
+#' 
+#' The quadrature setup is based on representative data generated from the regime
+#' parameters, ensuring the integration domain matches the data-generating process.
 #'
 #' @examples
 #' # Generate data for a 3-regime model
@@ -37,16 +47,20 @@ source("helpers/parameter_transforms.R")
 #' A_true <- rep(0.1, 6)  # Score scaling parameters
 #' B_true <- rep(0.9, 6)  # Persistence parameters
 #' data_sim <- dataGASCD(10, 1000, mu_true, sigma2_true, init_trans_true, A_true, B_true)
-dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
+dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
+                      n_nodes = 30, scaling_method = "moore_penrose", quad_sample_size = 1000) {
   # Parameters:
-  # M           Number of simulation runs to be performed
-  # N           Length of the simulation runs (discretized time)
-  # mu          Vector of true means corresponding to each regime
-  # sigma2      Vector of true variances corresponding to each regime
-  # init_trans  Initial transition probabilities for the latent process
-  # A           Scaling parameters for score updates (sensitivity)
-  # B           Persistence parameters for score updates (memory)
-  # burn_in     Number of burn-in observations to discard
+  # M                 Number of simulation runs to be performed
+  # N                 Length of the simulation runs (discretized time)
+  # mu                Vector of true means corresponding to each regime
+  # sigma2            Vector of true variances corresponding to each regime
+  # init_trans        Initial transition probabilities for the latent process
+  # A                 Scaling parameters for score updates (sensitivity)
+  # B                 Persistence parameters for score updates (memory)
+  # burn_in           Number of burn-in observations to discard
+  # n_nodes           Number of Gauss-Hermite quadrature nodes
+  # scaling_method    Score scaling method to use
+  # quad_sample_size  Sample size for quadrature setup
   
   # Ensure that means and variances have been provided for all regimes
   if (length(mu) != length(sigma2)) {
@@ -71,14 +85,40 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
                  n_transition, K, length(B)))
   }
   
+  # Validate scaling method
+  scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
+  
+  # Setup Gauss-Hermite quadrature based on regime parameters (Option B)
+  # Create representative data from regime parameters for quadrature setup
+  tryCatch({
+    # Generate sample sizes for each regime (equal weighting)
+    regime_weights <- rep(1/K, K)
+    sample_sizes <- round(quad_sample_size * regime_weights)
+    
+    # Ensure we have at least some samples for each regime
+    sample_sizes <- pmax(sample_sizes, 50)
+    
+    # Generate representative data from each regime
+    typical_data <- c()
+    for (k in 1:K) {
+      regime_data <- rnorm(sample_sizes[k], mu[k], sqrt(sigma2[k]))
+      typical_data <- c(typical_data, regime_data)
+    }
+    
+    # Setup quadrature based on this representative data
+    gh_setup <- setup_gauss_hermite_quadrature(typical_data, n_nodes = n_nodes, method = "data_based")
+    
+  }, error = function(e) {
+    warning("Failed to setup quadrature with regime parameters. Using standardized setup: ", e$message)
+    # Fallback to standardized setup
+    gh_setup <<- setup_gauss_hermite_quadrature(rnorm(quad_sample_size), n_nodes = n_nodes, method = "standardized")
+  })
+  
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
   
   # Get baseline transition probabilities that are logit-transformed
   omega <- logit(init_trans)
-  
-  # For Gauss-Hermite quadrature (used in scaling score updates)
-  GH_points <- 30
   
   for (i in 1:M) {
     # Initialize all data structures including burn-in period
@@ -95,9 +135,11 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
     # Arrays for score-driven dynamics
     f <- matrix(0, nrow=n_transition, ncol=total_length)       # Time-varying parameters (logit scale)
     p_trans <- matrix(0, nrow=n_transition, ncol=total_length) # Transition probabilities
-    score <- matrix(0, nrow=n_transition, ncol=total_length)   # Score vectors
     score_scaled <- matrix(0, nrow=n_transition, ncol=total_length) # Scaled score vectors
-    info <- numeric(total_length)                              # Fisher information
+    
+    # For debugging (optional - can be removed for performance)
+    fisher_info_series <- numeric(total_length)
+    score_norms <- numeric(total_length)
     
     # Initial state probabilities (uniform distribution)
     X_t[,1] <- rep(1/K, K)
@@ -106,10 +148,6 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
     f[,1] <- omega
     p_trans_raw <- logistic(f[,1])
     p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
-    
-    # Initialize setup for Gauss-Hermite quadrature (for scaling scores)
-    # This is used to compute expectations in the Fisher information matrix
-    gh_setup <- NULL
     
     for (t in 1:(total_length-1)) {
       # Generate predicted probabilities using current transition probabilities
@@ -128,67 +166,72 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
       tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
       
       # Calculate filtered probabilities
-      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-      
-      # Calculate the score vector (differences in likelihoods between regimes)
-      # Formula from the paper: r_t = (p(y_t|θ_0) - p(y_t|θ_1)) / p(y_t|θ) * g(f_t, θ, I_{t-1})
-      
-      # Compute likelihood differences for regimes
-      delta_like <- numeric(n_transition)
-      idx <- 1
-      for (r in 1:K) {
-        for (c in 1:K) {
-          if (r != c) {
-            # This calculates density difference impact for each transition probability
-            # Following Bazzi et al. (2017), equation (13)
-            delta_like[idx] <- (eta[r,t] - eta[c,t]) / tot_lik[t]
-            idx <- idx + 1
-          }
-        }
-      }
-      
-      # Compute the g vector - how filtered probabilities affect transitions
-      # Following Bazzi et al. (2017), equation (14)
-      g_vector <- numeric(n_transition)
-      idx <- 1
-      for (r in 1:K) {
-        for (c in 1:K) {
-          if (r != c) {
-            # Impact of filtered probability on transition probability
-            g_vector[idx] <- X_t[r,t] * p_trans[idx,t] * (1 - p_trans[idx,t])
-            idx <- idx + 1
-          }
-        }
-      }
-      
-      # Compute Fisher information scaling for better numerical stability
-      # This is an approximation using Gauss-Hermite quadrature
-      # The scaling is important for stability as described in Bazzi et al. (2017)
-      
-      # In a real implementation, we would compute Fisher information matrix
-      # and use the Moore-Penrose pseudo-inverse as in equation (15)
-      # Here we use a simplification where we approximate the scaling
-      
-      # Normalize g_vector for numerical stability
-      g_norm <- sqrt(sum(g_vector^2))
-      if (g_norm > 0) {
-        g_normalized <- g_vector / g_norm
+      if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
+        # Handle numerical issues
+        tot_lik[t] <- .Machine$double.eps
+        X_t[,t+1] <- rep(1/K, K)
+        score_scaled[,t] <- rep(0, n_transition)
+        fisher_info_series[t] <- NA
+        score_norms[t] <- 0
       } else {
-        g_normalized <- g_vector
+        X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
+        
+        # Calculate properly scaled score using our new helper functions
+        tryCatch({
+          # Normalize probabilities to ensure they sum to 1 (fix numerical precision issues)
+          X_tlag_sum <- sum(X_tlag[,t])
+          if (X_tlag_sum <= 0 || !is.finite(X_tlag_sum)) {
+            # Fallback to uniform distribution if X_tlag is invalid
+            warning(paste("Invalid X_tlag probabilities at time", t, "in simulation", i,
+                          "with sum =", X_tlag_sum, ". Using uniform fallback."))
+            X_tlag_normalized <- rep(1/K, K)
+          } else {
+            X_tlag_normalized <- X_tlag[,t] / X_tlag_sum
+          }
+          
+          # Also ensure X_t probabilities are valid
+          X_t_sum <- sum(X_t[,t])
+          if (X_t_sum <= 0 || !is.finite(X_t_sum)) {
+            warning(paste("Invalid X_t probabilities at time", t, "in simulation", i,
+                          "with sum =", X_t_sum, ". Using uniform fallback."))
+            X_t_normalized <- rep(1/K, K)
+          } else {
+            X_t_normalized <- X_t[,t] / X_t_sum
+          }
+          
+          # This is the key replacement - using proper GAS score calculation
+          scaled_score_t <- calculate_gas_score(
+            y_t = y.sim[t],
+            mu = mu,
+            sigma2 = sigma2,
+            X_t_lag = X_tlag_normalized,  # Use normalized version
+            X_t_prev = X_t_normalized,   # Use normalized version
+            p_trans = p_trans[,t],
+            gh_setup = gh_setup,
+            K = K,
+            scaling_method = scaling_method
+          )
+          
+          score_scaled[,t] <- scaled_score_t
+          
+          # Extract diagnostics if available
+          calc_info <- attr(scaled_score_t, "calculation_info")
+          if (!is.null(calc_info)) {
+            fisher_info_series[t] <- calc_info$fisher_info
+            score_norms[t] <- calc_info$scaled_score_norm
+          } else {
+            fisher_info_series[t] <- NA
+            score_norms[t] <- sqrt(sum(scaled_score_t^2))
+          }
+          
+        }, error = function(e) {
+          # Fallback to zero score if calculation fails
+          # In simulation, we might want to be more lenient than in estimation
+          score_scaled[,t] <<- rep(0, n_transition)
+          fisher_info_series[t] <<- NA
+          score_norms[t] <<- 0
+        })
       }
-      
-      # Unscaled score is product of likelihood differences and probability impacts
-      score[,t] <- delta_like * g_normalized
-      
-      # For simplicity in simulation, we're using a simplified scale factor
-      # In a real implementation, this would involve integrating over the
-      # distribution of y_t to get the expected Fisher information
-      
-      # Use a reasonable scaling factor based on the likelihood
-      scale_factor <- 1.0 / sqrt(1.0 + abs(delta_like))
-      
-      # Scaled score vector
-      score_scaled[,t] <- scale_factor * score[,t]
       
       # Update transition parameters using the score-driven dynamics
       # f_{t+1} = ω + A*s_t + B*(f_t - ω)
@@ -207,7 +250,40 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
     
     # Remove burn-in and save the simulation run in the data matrix
     data[i,] <- y.sim[(burn_in+1):total_length]
+    
+    # Optional: Store additional simulation diagnostics
+    # (Can be enabled for debugging or analysis)
+    if (FALSE) {  # Set to TRUE if you want to store simulation details
+      attr(data, paste0("sim_", i, "_diagnostics")) <- list(
+        S = S[(burn_in+1):total_length],
+        X_t = X_t[, (burn_in+1):total_length],
+        p_trans = p_trans[, (burn_in+1):total_length],
+        fisher_info = fisher_info_series[(burn_in+1):total_length],
+        score_norms = score_norms[(burn_in+1):total_length]
+      )
+    }
   }
+  
+  # Store simulation metadata
+  attr(data, "simulation_info") <- list(
+    M = M,
+    N = N,
+    K = K,
+    burn_in = burn_in,
+    parameters = list(
+      mu = mu,
+      sigma2 = sigma2,
+      init_trans = init_trans,
+      A = A,
+      B = B
+    ),
+    gas_settings = list(
+      n_nodes = n_nodes,
+      scaling_method = scaling_method,
+      quad_sample_size = quad_sample_size
+    ),
+    gh_setup = gh_setup
+  )
   
   return(data)
 }
@@ -222,9 +298,15 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
 #' @param y Observed time series increments
 #' @param B_burnin Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
+#' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
+#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
 #' @return Negative log-likelihood of observed data under the model
 #' @details
-#' Filters observed data through the model to compute the likelihood.
+#' Filters observed data through the model to compute the likelihood using proper
+#' GAS score scaling following Bazzi et al. (2017). This implementation replaces
+#' the simplified scaling with proper Gauss-Hermite quadrature and Moore-Penrose
+#' pseudo-inverse scaling.
+#'
 #' Returns the negative log-likelihood for compatibility with optimization functions.
 #'
 #' @examples
@@ -236,7 +318,8 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100) {
 #' B <- rep(0.9, 6)
 #' y <- rnorm(1000) 
 #' loglik <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, 100, 50)
-Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
+Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C, 
+                           n_nodes = 30, scaling_method = "moore_penrose") {
   # Parameters passed to the function are:
   # mu          Vector of true means corresponding to each regime
   # sigma2      Vector of true variances corresponding to each regime
@@ -246,6 +329,8 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
   # y           Observed time series increments
   # B_burnin    Burn-in to be excluded at the beginning of the time series
   # C           Cut-off to be excluded at the end of the time series
+  # n_nodes     Number of Gauss-Hermite quadrature nodes
+  # scaling_method Score scaling method to use
   
   # Ensure that means and variances have been provided for all regimes
   if (length(mu) != length(sigma2)) {
@@ -273,6 +358,19 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
                  n_transition, K, length(B)))
   }
   
+  # Validate scaling method
+  scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
+  
+  # Setup Gauss-Hermite quadrature based on observed data
+  # This is the key improvement - using actual data characteristics
+  tryCatch({
+    gh_setup <- setup_gauss_hermite_quadrature(y, n_nodes = n_nodes, method = "data_based")
+  }, error = function(e) {
+    warning("Failed to setup quadrature with data. Using standardized setup: ", e$message)
+    # Fallback to standardized setup
+    gh_setup <<- setup_gauss_hermite_quadrature(rnorm(1000), n_nodes = n_nodes, method = "standardized")
+  })
+  
   # Initialize variables
   eta <- matrix(0, nrow=K, ncol=M)      # Likelihood of each regime
   tot_lik <- numeric(M)                 # Total likelihood
@@ -282,8 +380,11 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
   # Arrays for score-driven dynamics
   f <- matrix(0, nrow=n_transition, ncol=M)       # Time-varying parameters (logit scale)
   p_trans <- matrix(0, nrow=n_transition, ncol=M) # Transition probabilities
-  score <- matrix(0, nrow=n_transition, ncol=M)   # Score vectors
   score_scaled <- matrix(0, nrow=n_transition, ncol=M) # Scaled score vectors
+  
+  # For debugging and analysis (optional storage)
+  fisher_info_series <- numeric(M)
+  score_norms <- numeric(M)
   
   # Get baseline transition probabilities that are logit-transformed
   omega <- logit(init_trans)
@@ -311,57 +412,77 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
     if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
       tot_lik[t] <- .Machine$double.eps
       X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
+      
+      # Use zero score for problematic observations
+      score_scaled[,t] <- rep(0, n_transition)
+      fisher_info_series[t] <- NA
+      score_norms[t] <- 0
+      
     } else {
       # Calculate filtered probabilities
       X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-    }
-    
-    # Calculate the score vector (following Bazzi et al. 2017)
-    # Compute likelihood differences for regimes
-    delta_like <- numeric(n_transition)
-    idx <- 1
-    for (r in 1:K) {
-      for (c in 1:K) {
-        if (r != c) {
-          delta_like[idx] <- (eta[r,t] - eta[c,t]) / tot_lik[t]
-          idx <- idx + 1
+      
+      # Calculate properly scaled score using our new helper functions
+      tryCatch({
+        # Normalize X_tlag to ensure it sums to 1 (fix numerical precision issues)
+        X_tlag_sum <- sum(X_tlag[,t])
+        if (X_tlag_sum <= 0 || !is.finite(X_tlag_sum)) {
+          # Fallback to uniform distribution if X_tlag is invalid
+          warning(paste("Invalid X_tlag probabilities at time", t, 
+                        "with sum =", X_tlag_sum, ". Using uniform fallback."))
+          X_tlag_normalized <- rep(1/K, K)
+        } else {
+          X_tlag_normalized <- X_tlag[,t] / X_tlag_sum
         }
-      }
-    }
-    
-    # Compute the g vector
-    g_vector <- numeric(n_transition)
-    idx <- 1
-    for (r in 1:K) {
-      for (c in 1:K) {
-        if (r != c) {
-          g_vector[idx] <- X_t[r,t] * p_trans[idx,t] * (1 - p_trans[idx,t])
-          idx <- idx + 1
+        
+        # Also ensure X_t probabilities are valid
+        X_t_sum <- sum(X_t[,t])
+        if (X_t_sum <= 0 || !is.finite(X_t_sum)) {
+          warning(paste("Invalid X_t probabilities at time", t, 
+                        "with sum =", X_t_sum, ". Using uniform fallback."))
+          X_t_normalized <- rep(1/K, K)
+        } else {
+          X_t_normalized <- X_t[,t] / X_t_sum
         }
-      }
+        
+        # This is the key replacement - using proper GAS score calculation
+        scaled_score_t <- calculate_gas_score(
+          y_t = y[t],
+          mu = mu,
+          sigma2 = sigma2,
+          X_t_lag = X_tlag_normalized,  # Use normalized version
+          X_t_prev = X_t_normalized,   # Use normalized version
+          p_trans = p_trans[,t],
+          gh_setup = gh_setup,
+          K = K,
+          scaling_method = scaling_method
+        )
+        
+        score_scaled[,t] <- scaled_score_t
+        
+        # Extract diagnostics if available
+        calc_info <- attr(scaled_score_t, "calculation_info")
+        if (!is.null(calc_info)) {
+          fisher_info_series[t] <- calc_info$fisher_info
+          score_norms[t] <- calc_info$scaled_score_norm
+        } else {
+          fisher_info_series[t] <- NA
+          score_norms[t] <- sqrt(sum(scaled_score_t^2))
+        }
+        
+      }, error = function(e) {
+        # Fallback to zero score if calculation fails
+        warning(paste("Score calculation failed at time", t, ":", e$message))
+        score_scaled[,t] <<- rep(0, n_transition)
+        fisher_info_series[t] <<- NA
+        score_norms[t] <<- 0
+      })
     }
     
-    # Normalize g_vector for numerical stability
-    g_norm <- sqrt(sum(g_vector^2))
-    if (g_norm > 0) {
-      g_normalized <- g_vector / g_norm
-    } else {
-      g_normalized <- g_vector
-    }
-    
-    # Unscaled score
-    score[,t] <- delta_like * g_normalized
-    
-    # Use a reasonable scaling factor
-    scale_factor <- 1.0 / sqrt(1.0 + abs(delta_like))
-    
-    # Scaled score vector
-    score_scaled[,t] <- scale_factor * score[,t]
-
     # Update transition parameters using the score-driven dynamics
     # f_{t+1} = ω + A*s_t + B*(f_t - ω)
     f[,t+1] <- omega + A * score_scaled[,t] + B * (f[,t] - omega)
-
+    
     # Transform back to probability space
     p_trans_raw <- logistic(f[,t+1])
     p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, K)
@@ -395,8 +516,19 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C) {
   attr(res, "X.t") <- t(X_t)
   attr(res, "X.tlag") <- t(X_tlag)
   attr(res, "p_trans") <- p_trans
-  attr(res, "score") <- score
   attr(res, "score_scaled") <- score_scaled
+  attr(res, "f") <- f  # Time-varying parameters in logit space
+  
+  # Store GAS-specific diagnostics
+  attr(res, "gas_diagnostics") <- list(
+    fisher_info_series = fisher_info_series,
+    score_norms = score_norms,
+    gh_setup = gh_setup,
+    scaling_method = scaling_method,
+    n_nodes = n_nodes,
+    mean_fisher_info = mean(fisher_info_series, na.rm = TRUE),
+    mean_score_norm = mean(score_norms, na.rm = TRUE)
+  )
   
   return(res)
 }

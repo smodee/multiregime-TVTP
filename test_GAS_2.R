@@ -1,7 +1,7 @@
 # test_gas_model.R
 #
 # This script tests the GAS (Generalized Autoregressive Score) regime-switching model
-# with simulation data.
+# with simulation data using proper score scaling.
 #
 # Author: Samuel Modée
 # Date: May 25, 2025
@@ -10,9 +10,6 @@
 rm(list = ls())
 
 # Load required libraries and model implementation
-source("helpers/utility_functions.R")
-source("helpers/transition_helpers.R")
-source("helpers/parameter_transforms.R")
 source("models/model_GAS.R")
 
 # Create a function to handle logging
@@ -34,6 +31,11 @@ N <- 1000  # Length of each simulation path
 B_burnin <- 200  # Burn-in period
 C <- 50  # Cut-off period
 
+# GAS model specific settings
+n_nodes <- 30  # Number of Gauss-Hermite quadrature nodes
+scaling_method <- "moore_penrose"  # Score scaling method
+quad_sample_size <- 1000  # Sample size for quadrature setup
+
 # Set true parameter values
 mu_true <- c(-2, -0.3, 2)  # Different means for each regime
 sigma2_true <- c(0.23, 0.17, 0.6)  # Different variances for each regime
@@ -48,13 +50,19 @@ log_message("CONFIGURATION", sprintf(
    Variances: %s
    Initial transition probabilities: %s
    A coefficients (sensitivity): %s
-   B coefficients (persistence): %s",
+   B coefficients (persistence): %s
+   
+   GAS Settings:
+   Quadrature nodes: %d
+   Scaling method: %s
+   Quadrature sample size: %d",
   K, M, N,
   paste(round(mu_true, 2), collapse=", "),
   paste(round(sigma2_true, 2), collapse=", "),
   paste(round(init_trans_true, 2), collapse=", "),
   paste(round(A_true, 2), collapse=", "),
-  paste(round(B_true, 2), collapse=", ")
+  paste(round(B_true, 2), collapse=", "),
+  n_nodes, scaling_method, quad_sample_size
 ))
 
 # Generate simulation data
@@ -62,11 +70,36 @@ log_message("DATA GENERATION", "Generating simulation data...")
 sim_start_time <- Sys.time()
 
 # Generate data with burn-in and cut-off periods
-sim_data <- dataGASCD(M, N+B_burnin+C, mu_true, sigma2_true, init_trans_true, A_true, B_true)
+sim_data <- dataGASCD(
+  M = M, 
+  N = N + B_burnin + C, 
+  mu = mu_true, 
+  sigma2 = sigma2_true, 
+  init_trans = init_trans_true, 
+  A = A_true, 
+  B = B_true,
+  burn_in = 0,  # Burn-in to be handled in estimation
+  n_nodes = n_nodes,
+  scaling_method = scaling_method,
+  quad_sample_size = quad_sample_size
+)
 
 sim_end_time <- Sys.time()
 log_message(NULL, sprintf("Data generation completed in %s", 
                           format(difftime(sim_end_time, sim_start_time), digits=4)))
+
+# Check if simulation metadata is available
+sim_info <- attr(sim_data, "simulation_info")
+if (!is.null(sim_info)) {
+  log_message("SIMULATION INFO", sprintf(
+    "Simulation metadata retrieved:
+     Quadrature setup: %s
+     GAS settings confirmed: nodes=%d, method=%s",
+    ifelse(!is.null(sim_info$gh_setup), "Available", "Not available"),
+    sim_info$gas_settings$n_nodes,
+    sim_info$gas_settings$scaling_method
+  ))
+}
 
 # Storage for estimation results
 n_transition <- K*(K-1)
@@ -78,6 +111,9 @@ colnames(param_estimates) <- c(paste0("mu", 1:K),
                                paste0("B", 1:n_transition))
 diagnostics <- matrix(0, M, 3)
 colnames(diagnostics) <- c("loglik", "aic", "bic")
+
+# Storage for GAS-specific diagnostics
+gas_diagnostics <- list()
 
 # Estimate parameters for each simulation path
 log_message("PARAMETER ESTIMATION", sprintf("Starting parameter estimation for %d simulation paths...", M))
@@ -148,10 +184,16 @@ for (i in 1:M) {
     diagnostics[i, 2] <- estimate$diagnostics$aic
     diagnostics[i, 3] <- estimate$diagnostics$bic
     
+    # Store GAS-specific diagnostics if available
+    if (!is.null(estimate$gas_diagnostics)) {
+      gas_diagnostics[[i]] <- estimate$gas_diagnostics
+    }
+    
   }, error = function(e) {
     log_message(NULL, paste("ERROR in path", i, ":", e$message))
     param_estimates[i,] <- NA
     diagnostics[i,] <- NA
+    gas_diagnostics[[i]] <- NULL
   })
 }
 
@@ -187,6 +229,38 @@ log_message(NULL, sprintf("Mean BIC: %.2f", mean(diagnostics[,3], na.rm = TRUE))
 # Additional GAS-specific diagnostics
 successful_runs <- !is.na(diagnostics[,1])
 if (sum(successful_runs) > 0) {
+  # Analyze GAS-specific diagnostics from successful runs
+  gas_diag_summary <- list(
+    mean_fisher_info = numeric(0),
+    mean_score_norm = numeric(0),
+    scaling_methods = character(0)
+  )
+  
+  for (i in which(successful_runs)) {
+    if (!is.null(gas_diagnostics[[i]])) {
+      gas_diag_summary$mean_fisher_info <- c(gas_diag_summary$mean_fisher_info, 
+                                             gas_diagnostics[[i]]$mean_fisher_info)
+      gas_diag_summary$mean_score_norm <- c(gas_diag_summary$mean_score_norm, 
+                                            gas_diagnostics[[i]]$mean_score_norm)
+      gas_diag_summary$scaling_methods <- c(gas_diag_summary$scaling_methods, 
+                                            gas_diagnostics[[i]]$scaling_method)
+    }
+  }
+  
+  if (length(gas_diag_summary$mean_fisher_info) > 0) {
+    log_message("GAS DIAGNOSTICS", sprintf(
+      "Score scaling diagnostics:
+       Average Fisher Information: %.4f (SD: %.4f)
+       Average Score Norm: %.4f (SD: %.4f)
+       Scaling method used: %s",
+      mean(gas_diag_summary$mean_fisher_info, na.rm = TRUE),
+      sd(gas_diag_summary$mean_fisher_info, na.rm = TRUE),
+      mean(gas_diag_summary$mean_score_norm, na.rm = TRUE),
+      sd(gas_diag_summary$mean_score_norm, na.rm = TRUE),
+      unique(gas_diag_summary$scaling_methods)[1]
+    ))
+  }
+  
   # Calculate regime persistence metrics for the first successful run
   first_success_idx <- which(successful_runs)[1]
   
@@ -222,6 +296,64 @@ if (sum(successful_runs) > 0) {
   })
 }
 
+# Test score scaling methods comparison (optional)
+if (sum(successful_runs) > 0) {
+  log_message("SCORE SCALING COMPARISON", "Testing different scaling methods on the first successful dataset...")
+  
+  first_success_data <- sim_data[which(successful_runs)[1], ]
+  scaling_methods_to_test <- c("moore_penrose", "simple", "normalized")
+  
+  scaling_comparison <- data.frame(
+    Method = character(0),
+    LogLik = numeric(0),
+    AIC = numeric(0),
+    EstTime = numeric(0)
+  )
+  
+  for (method in scaling_methods_to_test) {
+    tryCatch({
+      method_start_time <- Sys.time()
+      
+      # Test the scaling method by calling the filtering function directly
+      test_result <- Rfiltering_GAS(
+        mu = mu_true, 
+        sigma2 = sigma2_true, 
+        init_trans = init_trans_true, 
+        A = A_true, 
+        B = B_true, 
+        y = first_success_data, 
+        B_burnin = B_burnin, 
+        C = C,
+        n_nodes = n_nodes,
+        scaling_method = method
+      )
+      
+      method_end_time <- Sys.time()
+      method_time <- as.numeric(difftime(method_end_time, method_start_time, units = "secs"))
+      
+      # Calculate AIC (approximate since we're using true parameters)
+      loglik <- -test_result
+      n_params <- 2*K + 3*n_transition
+      aic <- 2 * (-loglik) + 2 * n_params
+      
+      scaling_comparison <- rbind(scaling_comparison, data.frame(
+        Method = method,
+        LogLik = loglik,
+        AIC = aic,
+        EstTime = method_time
+      ))
+      
+    }, error = function(e) {
+      log_message(NULL, paste("Error testing", method, "method:", e$message))
+    })
+  }
+  
+  if (nrow(scaling_comparison) > 0) {
+    log_message(NULL, "Scaling method comparison results:")
+    print(scaling_comparison)
+  }
+}
+
 # Save results
 results_dir <- "results"
 dir.create(results_dir, showWarnings = FALSE)
@@ -230,7 +362,8 @@ dir.create(results_dir, showWarnings = FALSE)
 timestamp_id <- format(Sys.time(), "%Y-%m-%d-%H%M%S")
 results_filename <- paste0("gas_model_test_results_", timestamp_id, ".rds")
 
-saveRDS(list(
+# Include GAS-specific information in saved results
+save_data <- list(
   parameters = list(
     mu = mu_true,
     sigma2 = sigma2_true,
@@ -243,6 +376,12 @@ saveRDS(list(
     diagnostics = diagnostics,
     summary = estimates_summary
   ),
+  gas_settings = list(
+    n_nodes = n_nodes,
+    scaling_method = scaling_method,
+    quad_sample_size = quad_sample_size
+  ),
+  gas_diagnostics = gas_diagnostics,
   settings = list(
     M = M,
     N = N,
@@ -250,7 +389,14 @@ saveRDS(list(
     B_burnin = B_burnin,
     C = C
   )
-), file = file.path(results_dir, results_filename))
+)
+
+# Add scaling comparison if available
+if (exists("scaling_comparison") && nrow(scaling_comparison) > 0) {
+  save_data$scaling_comparison <- scaling_comparison
+}
+
+saveRDS(save_data, file = file.path(results_dir, results_filename))
 
 # Create plots
 plot_filename <- paste0("gas_model_test_plots_", timestamp_id, ".pdf")
@@ -355,9 +501,9 @@ if (exists("test_estimate")) {
   }
   
   # Score evolution (if available)
-  if (!is.null(test_estimate$scores)) {
+  if (!is.null(test_estimate$scaled_scores)) {
     # Show scaled scores for first few transitions
-    n_show <- min(4, nrow(test_estimate$scores))
+    n_show <- min(4, nrow(test_estimate$scaled_scores))
     matplot(t(test_estimate$scaled_scores[1:n_show, ]), type = "l",
             main = "Scaled Score Evolution",
             xlab = "Time", ylab = "Scaled Score",
@@ -381,6 +527,21 @@ if (exists("test_estimate")) {
   abline(h = 0, col = "red", lty = 2)
 }
 
+# Plot 4: Scaling method comparison (if available)
+if (exists("scaling_comparison") && nrow(scaling_comparison) > 0) {
+  par(mfrow = c(1, 2))
+  
+  # Log-likelihood comparison
+  barplot(scaling_comparison$LogLik, names.arg = scaling_comparison$Method,
+          main = "Log-Likelihood by Scaling Method",
+          ylab = "Log-Likelihood", col = "lightsteelblue")
+  
+  # Estimation time comparison
+  barplot(scaling_comparison$EstTime, names.arg = scaling_comparison$Method,
+          main = "Estimation Time by Scaling Method",
+          ylab = "Time (seconds)", col = "lightcoral")
+}
+
 dev.off()
 
 log_message(NULL, sprintf("Plots saved to %s", file.path(results_dir, plot_filename)))
@@ -401,7 +562,12 @@ log_message("FINAL SUMMARY", sprintf(
    Model fit:
    - Mean Log-Likelihood: %.2f
    - Mean AIC: %.2f
-   - Mean BIC: %.2f",
+   - Mean BIC: %.2f
+   
+   GAS Implementation:
+   - Quadrature nodes: %d
+   - Scaling method: %s
+   - Proper Moore-Penrose scaling: ENABLED",
   sum(successful_runs), M, 100 * sum(successful_runs) / M,
   mean(abs(estimates_summary$Bias[1:K]), na.rm = TRUE),
   mean(abs(estimates_summary$Bias[(K+1):(2*K)]), na.rm = TRUE),
@@ -410,7 +576,8 @@ log_message("FINAL SUMMARY", sprintf(
   mean(abs(estimates_summary$Bias[(2*K+2*n_transition+1):(2*K+3*n_transition)]), na.rm = TRUE),
   mean(diagnostics[,1], na.rm = TRUE),
   mean(diagnostics[,2], na.rm = TRUE),
-  mean(diagnostics[,3], na.rm = TRUE)
+  mean(diagnostics[,3], na.rm = TRUE),
+  n_nodes, scaling_method
 ))
 
 log_message("COMPLETE", "Test completed successfully!")
