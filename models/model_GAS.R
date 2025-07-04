@@ -1,12 +1,11 @@
-#' Score-Driven (GAS) Time-Varying Transition Probability Models
+#' Generalized Autoregressive Score Models with Time-Varying Transition Probabilities
 #' 
 #' This file implements a regime-switching model where transition probabilities
-#' vary over time according to the score of the predictive likelihood function.
+#' are driven by the score of the predictive likelihood function (GAS dynamics).
 #'
-#' Reference: Sendstad, Chronopoulos, & Li (2025) - The Value of Turning-Point 
-#' Detection for Optimal Investment
-#' Based on: Bazzi et al. (2017) - Time-Varying Transition Probabilities for Markov Regime
-#' Switching Models
+#' Reference: Bazzi, M., Blasques, F., Koopman, S.J., & Lucas, A. (2017).
+#' Time-Varying Transition Probabilities for Markov Regime Switching Models.
+#' Journal of Time Series Analysis, 38(3), 458-478.
 
 # Load required helper functions
 source("helpers/utility_functions.R")
@@ -88,7 +87,7 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
   # Validate scaling method
   scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
   
-  # Setup Gauss-Hermite quadrature based on regime parameters (Option B)
+  # Setup Gauss-Hermite quadrature based on regime parameters
   # Create representative data from regime parameters for quadrature setup
   tryCatch({
     # Generate sample sizes for each regime (equal weighting)
@@ -137,7 +136,7 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
     p_trans <- matrix(0, nrow=n_transition, ncol=total_length) # Transition probabilities
     score_scaled <- matrix(0, nrow=n_transition, ncol=total_length) # Scaled score vectors
     
-    # For debugging (optional - can be removed for performance)
+    # For debugging and diagnostics
     fisher_info_series <- numeric(total_length)
     score_norms <- numeric(total_length)
     
@@ -167,7 +166,9 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
       
       # Calculate filtered probabilities
       if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
-        # Handle numerical issues
+        # Handle numerical issues with warning
+        warning(paste("Invalid total likelihood", tot_lik[t], "at time", t, 
+                      "in simulation", i, "- resetting to uniform probabilities and zero scores"))
         tot_lik[t] <- .Machine$double.eps
         X_t[,t+1] <- rep(1/K, K)
         score_scaled[,t] <- rep(0, n_transition)
@@ -199,7 +200,7 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
             X_t_normalized <- X_t[,t] / X_t_sum
           }
           
-          # This is the key replacement - using proper GAS score calculation
+          # Use proper GAS score calculation from helpers
           scaled_score_t <- calculate_gas_score(
             y_t = y.sim[t],
             mu = mu,
@@ -225,8 +226,9 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
           }
           
         }, error = function(e) {
-          # Fallback to zero score if calculation fails
-          # In simulation, we might want to be more lenient than in estimation
+          # Fallback to zero score if calculation fails - with warning
+          warning(paste("GAS score calculation failed at time", t, "in simulation", i, 
+                        "- using zero scores. Error:", e$message))
           score_scaled[,t] <<- rep(0, n_transition)
           fisher_info_series[t] <<- NA
           score_norms[t] <<- 0
@@ -251,9 +253,16 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
     # Remove burn-in and save the simulation run in the data matrix
     data[i,] <- y.sim[(burn_in+1):total_length]
     
-    # Optional: Store additional simulation diagnostics
-    # (Can be enabled for debugging or analysis)
-    if (FALSE) {  # Set to TRUE if you want to store simulation details
+    # Check for excessive zero scores and warn if problematic
+    zero_score_count <- sum(apply(score_scaled[, 1:(total_length-1)], 2, function(x) all(x == 0)))
+    if (zero_score_count > (total_length-1) * 0.1) {  # Warn if >10% zero scores
+      warning(paste("Simulation", i, "used zero scores for", zero_score_count, 
+                    "out of", total_length-1, "time points (", 
+                    round(100*zero_score_count/(total_length-1), 1), "%)"))
+    }
+    
+    # Optional: Store additional simulation diagnostics for debugging
+    if (getOption("store_gas_simulation_details", FALSE)) {
       attr(data, paste0("sim_", i, "_diagnostics")) <- list(
         S = S[(burn_in+1):total_length],
         X_t = X_t[, (burn_in+1):total_length],
@@ -303,9 +312,9 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
 #' @return Negative log-likelihood of observed data under the model
 #' @details
 #' Filters observed data through the model to compute the likelihood using proper
-#' GAS score scaling following Bazzi et al. (2017). This implementation replaces
-#' the simplified scaling with proper Gauss-Hermite quadrature and Moore-Penrose
-#' pseudo-inverse scaling.
+#' GAS score scaling following Bazzi et al. (2017). This implementation uses
+#' the sophisticated score calculation helpers with Gauss-Hermite quadrature 
+#' and Moore-Penrose pseudo-inverse scaling.
 #'
 #' Returns the negative log-likelihood for compatibility with optimization functions.
 #'
@@ -382,7 +391,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
   p_trans <- matrix(0, nrow=n_transition, ncol=M) # Transition probabilities
   score_scaled <- matrix(0, nrow=n_transition, ncol=M) # Scaled score vectors
   
-  # For debugging and analysis (optional storage)
+  # For debugging and analysis
   fisher_info_series <- numeric(M)
   score_norms <- numeric(M)
   
@@ -410,6 +419,8 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
     
     # Protect against numerical issues
     if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
+      warning(paste("Invalid total likelihood", tot_lik[t], "at time", t, 
+                    "- resetting to uniform probabilities and zero scores"))
       tot_lik[t] <- .Machine$double.eps
       X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
       
@@ -422,7 +433,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
       # Calculate filtered probabilities
       X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
       
-      # Calculate properly scaled score using our new helper functions
+      # Calculate properly scaled score using our helper functions
       tryCatch({
         # Normalize X_tlag to ensure it sums to 1 (fix numerical precision issues)
         X_tlag_sum <- sum(X_tlag[,t])
@@ -445,7 +456,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
           X_t_normalized <- X_t[,t] / X_t_sum
         }
         
-        # This is the key replacement - using proper GAS score calculation
+        # Use proper GAS score calculation from helpers
         scaled_score_t <- calculate_gas_score(
           y_t = y[t],
           mu = mu,
@@ -471,8 +482,9 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
         }
         
       }, error = function(e) {
-        # Fallback to zero score if calculation fails
-        warning(paste("Score calculation failed at time", t, ":", e$message))
+        # Fallback to zero score if calculation fails - with warning
+        warning(paste("GAS score calculation failed at time", t, 
+                      "- using zero scores. Error:", e$message))
         score_scaled[,t] <<- rep(0, n_transition)
         fisher_info_series[t] <<- NA
         score_norms[t] <<- 0
@@ -509,6 +521,17 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
   
   logLikSum <- sum(log(tot_lik[valid_indices]))
   
+  # Check for excessive zero scores and warn if problematic
+  valid_score_indices <- B_burnin:(M-1-C)  # Exclude burn-in and cut-off from score check
+  if (length(valid_score_indices) > 0) {
+    zero_score_count <- sum(apply(score_scaled[, valid_score_indices, drop=FALSE], 2, function(x) all(x == 0)))
+    if (zero_score_count > length(valid_score_indices) * 0.1) {  # Warn if >10% zero scores
+      warning(paste("GAS filtering used zero scores for", zero_score_count, 
+                    "out of", length(valid_score_indices), "time points (", 
+                    round(100*zero_score_count/length(valid_score_indices), 1), "%)"))
+    }
+  }
+  
   # Return negative sum of log-likelihoods (for minimizing)
   res <- -logLikSum
   
@@ -527,7 +550,10 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
     scaling_method = scaling_method,
     n_nodes = n_nodes,
     mean_fisher_info = mean(fisher_info_series, na.rm = TRUE),
-    mean_score_norm = mean(score_norms, na.rm = TRUE)
+    mean_score_norm = mean(score_norms, na.rm = TRUE),
+    zero_score_percentage = if(length(valid_score_indices) > 0) {
+      100 * sum(apply(score_scaled[, valid_score_indices, drop=FALSE], 2, function(x) all(x == 0))) / length(valid_score_indices)
+    } else { 0 }
   )
   
   return(res)
@@ -539,7 +565,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
 #' @return Parameters in unconstrained space
 #' @details
 #' Applies log transformation to variances, logit to transition probabilities,
-#' and logit to A and B coefficient to make parameters suitable for unconstrained optimization.
+#' and logit to A and B coefficients to make parameters suitable for unconstrained optimization.
 transform_GAS <- function(par) {
   K <- count_regime_GAS(par)
   n_transition <- K*(K-1)
@@ -591,9 +617,14 @@ untransform_GAS <- function(par_t) {
 #' @param par Parameter vector
 #' @return Number of regimes
 count_regime_GAS <- function(par) {
-  # For GAS model: 3K^2 - K - length(par) = 0
+  # For GAS model: K + K + K*(K-1) + K*(K-1) + K*(K-1) = 3K^2 - K
+  # So: 3K^2 - K - length(par) = 0
   # Using quadratic formula: K = (1 + sqrt(1 + 12*length(par)))/6
   discriminant <- 1 + 12*length(par)
+  if (discriminant < 0) {
+    stop("Invalid parameter vector length for GAS model")
+  }
+  
   K <- (1 + sqrt(discriminant))/6
   
   if (abs(K - round(K)) > 1e-10) {
@@ -610,6 +641,8 @@ count_regime_GAS <- function(par) {
 #' @param y Observed time series increments
 #' @param B_burnin Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
+#' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
+#' @param scaling_method Score scaling method (default: "moore_penrose")
 #' @return Negative log-likelihood of observed data under the model
 #' @details
 #' Transforms parameters from unconstrained space back to natural space
@@ -620,7 +653,8 @@ count_regime_GAS <- function(par) {
 #' transformed_params <- transform_GAS(c(mu, sigma2, init_trans, A, B))
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_GAS, 
 #'                 y = y, B_burnin = 100, C = 50)
-Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C) {
+Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C, 
+                                        n_nodes = 30, scaling_method = "moore_penrose") {
   # Transform parameters back to original parameter space
   par <- untransform_GAS(par_t)
   
@@ -636,7 +670,7 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C) {
   B <- par[(2*K+2*n_transition+1):(2*K+3*n_transition)]
   
   # Calculate likelihood and return it
-  l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C)
+  l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C, n_nodes, scaling_method)
   return(l[1])
 }
 
@@ -648,6 +682,8 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C) {
 #' @param C Cut-off period to exclude from likelihood calculation
 #' @param initial_params Initial parameter guesses (optional)
 #' @param bounds Parameter bounds for optimization (optional)
+#' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
+#' @param scaling_method Score scaling method (default: "moore_penrose")
 #' @param verbose Whether to print progress information (default: TRUE)
 #' @return List with estimated parameters and model diagnostics
 #' @details
@@ -661,6 +697,7 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C) {
 #' results <- estimate_gas_model(data, K=3)
 estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50, 
                                initial_params = NULL, bounds = NULL,
+                               n_nodes = 30, scaling_method = "moore_penrose",
                                verbose = TRUE) {
   if (verbose) {
     cat("Estimating GAS model with", K, "regimes\n")
@@ -694,6 +731,8 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
       cat("Generated initial parameter guesses:\n")
       cat("Means:", round(mu_guess, 4), "\n")
       cat("Variances:", round(sigma2_guess, 4), "\n")
+      cat("A coefficients (sensitivity):", round(A_guess, 4), "\n")
+      cat("B coefficients (persistence):", round(B_guess, 4), "\n")
     }
   }
   
@@ -731,6 +770,8 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     y = y,
     B_burnin = B_burnin,
     C = C,
+    n_nodes = n_nodes,
+    scaling_method = scaling_method,
     control = list(eval.max = 1e6, iter.max = 1e6, trace = ifelse(verbose, 1, 0))
   )
   
@@ -761,13 +802,13 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   
   # Calculate filtered probabilities and other model outputs
   full_likelihood <- Rfiltering_GAS(
-    mu_est, sigma2_est, init_trans_est, A_est, B_est, y, B_burnin, C
+    mu_est, sigma2_est, init_trans_est, A_est, B_est, y, B_burnin, C, n_nodes, scaling_method
   )
   
   filtered_probs <- attr(full_likelihood, "X.t")
   transition_probs <- attr(full_likelihood, "p_trans")
-  scores <- attr(full_likelihood, "score")
   scaled_scores <- attr(full_likelihood, "score_scaled")
+  gas_diagnostics_raw <- attr(full_likelihood, "gas_diagnostics")
   
   # Prepare results
   results <- list(
@@ -788,13 +829,15 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     optimization = optimization_result,
     filtered_probabilities = filtered_probs,
     transition_probabilities = transition_probs,
-    scores = scores,
     scaled_scores = scaled_scores,
+    gas_diagnostics = gas_diagnostics_raw,
     model_info = list(
       type = "GAS",
       K = K,
       B_burnin = B_burnin,
-      C = C
+      C = C,
+      n_nodes = n_nodes,
+      scaling_method = scaling_method
     )
   )
   
@@ -807,6 +850,12 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
     cat("Estimated A coefficients (mean):", round(mean(A_est), 4), "\n")
     cat("Estimated B coefficients (mean):", round(mean(B_est), 4), "\n")
+    
+    # GAS-specific diagnostics
+    if (!is.null(gas_diagnostics_raw)) {
+      cat("GAS diagnostics - Mean Fisher Info:", round(gas_diagnostics_raw$mean_fisher_info, 4), "\n")
+      cat("GAS diagnostics - Mean Score Norm:", round(gas_diagnostics_raw$mean_score_norm, 4), "\n")
+    }
   }
   
   return(results)
@@ -823,6 +872,8 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
 #' @param B True persistence coefficients
 #' @param B_burnin Burn-in period
 #' @param C Cut-off period
+#' @param n_nodes Number of Gauss-Hermite quadrature nodes
+#' @param scaling_method Score scaling method
 #' @param verbose Whether to print progress information
 #' @return List with simulation results and estimation results
 #' @details
@@ -844,7 +895,9 @@ example_GAS_simulation <- function(M = 10, N = 1000,
                                    init_trans = rep(0.2, 6), 
                                    A = rep(0.1, 6),
                                    B = rep(0.9, 6),
-                                   B_burnin = 100, C = 50, verbose = TRUE) {
+                                   B_burnin = 100, C = 50, 
+                                   n_nodes = 30, scaling_method = "moore_penrose",
+                                   verbose = TRUE) {
   # Parameters
   K <- length(mu)    # Number of regimes
   n_transition <- K*(K-1)
@@ -856,6 +909,7 @@ example_GAS_simulation <- function(M = 10, N = 1000,
     cat("Variances:", sigma2, "\n")
     cat("Score scaling (A) mean:", mean(A), "\n")
     cat("Persistence (B) mean:", mean(B), "\n")
+    cat("GAS settings - Nodes:", n_nodes, "Scaling:", scaling_method, "\n")
   }
   
   # Generate simulation data
@@ -864,7 +918,9 @@ example_GAS_simulation <- function(M = 10, N = 1000,
     start_time <- Sys.time()
   }
   
-  data_GAS_sim <- dataGASCD(M, N, mu, sigma2, init_trans, A, B)
+  data_GAS_sim <- dataGASCD(M, N, mu, sigma2, init_trans, A, B, 
+                            burn_in = 0, n_nodes = n_nodes, 
+                            scaling_method = scaling_method)
   
   if (verbose) {
     end_time <- Sys.time()
@@ -881,6 +937,9 @@ example_GAS_simulation <- function(M = 10, N = 1000,
                                 paste0("B", 1:n_transition))
   diagnostics <- matrix(0, M, 3)
   colnames(diagnostics) <- c("loglik", "aic", "bic")
+  
+  # Storage for GAS-specific diagnostics
+  gas_diagnostics <- list()
   
   # Estimate parameters for each simulation path
   if (verbose) {
@@ -913,6 +972,8 @@ example_GAS_simulation <- function(M = 10, N = 1000,
       y = current_data,
       B_burnin = B_burnin, 
       C = C,
+      n_nodes = n_nodes,
+      scaling_method = scaling_method,
       control = list(eval.max = 1e6, iter.max = 1e6, trace = 0)
     ), silent = TRUE)
     
@@ -929,6 +990,13 @@ example_GAS_simulation <- function(M = 10, N = 1000,
       diagnostics[i, 2] <- 2 * GAS_est$objective + 2 * num_params
       diagnostics[i, 3] <- 2 * GAS_est$objective + num_params * log(N - B_burnin - C)
       
+      # Store GAS-specific diagnostics (simplified for batch processing)
+      gas_diagnostics[[i]] <- list(
+        converged = GAS_est$convergence == 0,
+        iterations = GAS_est$iterations,
+        scaling_method = scaling_method
+      )
+      
       if (verbose) {
         path_end_time <- Sys.time()
         path_time <- difftime(path_end_time, path_start_time, units = "secs")
@@ -939,6 +1007,7 @@ example_GAS_simulation <- function(M = 10, N = 1000,
       # Handle estimation errors
       param_estimates[i,] <- NA
       diagnostics[i,] <- NA
+      gas_diagnostics[[i]] <- NULL
       
       if (verbose) {
         cat("FAILED - Optimization error\n")
@@ -985,6 +1054,13 @@ example_GAS_simulation <- function(M = 10, N = 1000,
     cat("\nMean Log-Likelihood:", mean(diagnostics[,1], na.rm = TRUE), "\n")
     cat("Mean AIC:", mean(diagnostics[,2], na.rm = TRUE), "\n")
     cat("Mean BIC:", mean(diagnostics[,3], na.rm = TRUE), "\n")
+    
+    # GAS-specific summary
+    successful_runs <- !is.na(diagnostics[,1])
+    if (sum(successful_runs) > 0) {
+      convergence_rate <- mean(sapply(gas_diagnostics[successful_runs], function(x) x$converged), na.rm = TRUE)
+      cat("Convergence rate:", round(convergence_rate * 100, 1), "%\n")
+    }
   }
   
   # Prepare return values
@@ -1004,169 +1080,66 @@ example_GAS_simulation <- function(M = 10, N = 1000,
       diagnostics = diagnostics,
       summary = estimates_summary
     ),
+    gas_diagnostics = gas_diagnostics,
     settings = list(
       M = M,
       N = N,
       K = K,
       B_burnin = B_burnin,
-      C = C
+      C = C,
+      n_nodes = n_nodes,
+      scaling_method = scaling_method
     )
   )
   
   return(results)
 }
 
-#' Compare TVP, Exogenous, and GAS Models
+#' Helper function to calculate regime persistence metrics
 #'
-#' @param y Observed time series
-#' @param X_Exo Optional exogenous variable for the Exogenous model
-#' @param K Number of regimes
-#' @param models Character vector specifying which models to compare
-#' @param B_burnin Burn-in period
-#' @param C Cut-off period
-#' @param verbose Whether to print progress information
-#' @return Data frame comparing model performance
-#' @details
-#' Estimates multiple time-varying transition probability models and 
-#' compares their performance using likelihood-based criteria.
-#'
-#' @examples
-#' # Compare all three models
-#' data <- rnorm(1000)
-#' exo <- rnorm(1000)
-#' comparison <- compare_tvtp_models(data, exo, K=3, 
-#'                                  models=c("TVP", "Exogenous", "GAS"))
-compare_tvtp_models <- function(y, X_Exo = NULL, K = 3, 
-                               models = c("Constant", "TVP", "Exogenous", "GAS"),
-                               B_burnin = 100, C = 50, verbose = TRUE) {
-  # Check if required models are available
-  available_models <- c("Constant", "TVP", "Exogenous", "GAS")
-  models <- match.arg(models, available_models, several.ok = TRUE)
-  
-  # Check if exogenous variable is provided when needed
-  if ("Exogenous" %in% models && is.null(X_Exo)) {
-    stop("Exogenous model requires X_Exo to be specified")
-  }
-  
-  # Make sure exogenous variable has the right length
-  if (!is.null(X_Exo) && length(X_Exo) != length(y)) {
-    stop("X_Exo must have the same length as y")
-  }
-  
-  # Prepare results
-  results <- data.frame()
-  
-  # Estimate each model
-  for (model_type in models) {
-    if (verbose) {
-      cat("\n--- Estimating", model_type, "model ---\n")
-    }
-    
-    start_time <- Sys.time()
-    
-    # Estimate the specified model
-    if (model_type == "Constant") {
-      # Source the constant model file if not already loaded
-      if (!exists("estimate_const_model")) {
-        source("models/model_constant.R")
-      }
-      
-      model_result <- estimate_const_model(y, K, B_burnin, C, verbose = verbose)
-    } else if (model_type == "TVP") {
-      # Source the TVP model file if not already loaded
-      if (!exists("estimate_tvp_model")) {
-        source("models/model_TVP.R")
-      }
-      
-      model_result <- estimate_tvp_model(y, K, B_burnin, C, verbose = verbose)
-    } else if (model_type == "Exogenous") {
-      # Source the exogenous model file if not already loaded
-      if (!exists("estimate_exo_model")) {
-        source("models/model_exogenous.R")
-      }
-      
-      model_result <- estimate_exo_model(y, X_Exo, K, B_burnin, C, verbose = verbose)
-    } else if (model_type == "GAS") {
-      model_result <- estimate_gas_model(y, K, B_burnin, C, verbose = verbose)
-    }
-    
-    end_time <- Sys.time()
-    elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
-    
-    # Record results
-    model_info <- data.frame(
-      Model = model_type,
-      LogLik = model_result$diagnostics$loglik,
-      AIC = model_result$diagnostics$aic,
-      BIC = model_result$diagnostics$bic,
-      NumParams = model_result$diagnostics$num_params,
-      EstimationTime = elapsed
-    )
-    
-    results <- rbind(results, model_info)
-    
-    if (verbose) {
-      cat("Estimation completed in", format_time(elapsed), "\n")
-      cat("LogLik:", round(model_result$diagnostics$loglik, 2), 
-          "AIC:", round(model_result$diagnostics$aic, 2),
-          "BIC:", round(model_result$diagnostics$bic, 2), "\n")
-    }
-  }
-  
-  # Sort by AIC (best model first)
-  results <- results[order(results$AIC), ]
-  
-  return(results)
-}
-
-#' Calculate regime persistence metrics
-#'
-#' @param filtered_probs Matrix of filtered probabilities (rows are time, columns are regimes)
-#' @param threshold Probability threshold for regime identification (default: 0.5)
+#' @param filtered_probs Matrix of filtered probabilities (T x K)
 #' @return List with persistence metrics
 #' @details
-#' Calculates various persistence metrics for the estimated regimes
-#' to better understand the model dynamics.
-calculate_persistence <- function(filtered_probs, threshold = 0.5) {
-  # Determine the most likely regime at each point in time
-  most_likely_regime <- apply(filtered_probs, 1, which.max)
+#' Calculates various metrics about regime persistence and transitions
+#' from the filtered probability sequences.
+calculate_persistence <- function(filtered_probs) {
+  if (!is.matrix(filtered_probs)) {
+    stop("filtered_probs must be a matrix")
+  }
   
-  # Calculate the number of transitions
-  num_transitions <- sum(diff(most_likely_regime) != 0)
-  transition_rate <- num_transitions / (length(most_likely_regime) - 1)
+  T_obs <- nrow(filtered_probs)
+  K <- ncol(filtered_probs)
   
-  # Calculate average duration in each regime
-  regimes <- unique(most_likely_regime)
-  durations <- list()
+  # Get most likely regime at each time point
+  regime_sequence <- apply(filtered_probs, 1, which.max)
   
-  for (r in regimes) {
-    # Find consecutive stretches of this regime
-    in_regime <- most_likely_regime == r
-    run_lengths <- rle(in_regime)
-    lengths <- run_lengths$lengths[run_lengths$values]
-    
-    if (length(lengths) > 0) {
-      durations[[as.character(r)]] <- lengths
+  # Count transitions
+  transitions <- sum(diff(regime_sequence) != 0)
+  transition_rate <- transitions / (T_obs - 1)
+  
+  # Calculate average durations in each regime
+  rle_result <- rle(regime_sequence)
+  regime_durations <- split(rle_result$lengths, rle_result$values)
+  
+  avg_durations <- numeric(K)
+  for (k in 1:K) {
+    if (k %in% names(regime_durations)) {
+      avg_durations[k] <- mean(regime_durations[[as.character(k)]])
     } else {
-      durations[[as.character(r)]] <- 0
+      avg_durations[k] <- 0
     }
   }
   
-  # Calculate average durations
-  avg_durations <- sapply(durations, mean)
-  
   # Calculate regime occupancy percentages
-  regime_counts <- table(most_likely_regime)
-  regime_percentages <- 100 * regime_counts / length(most_likely_regime)
+  regime_counts <- table(factor(regime_sequence, levels = 1:K))
+  regime_percentages <- as.numeric(regime_counts) / T_obs * 100
   
   return(list(
-    most_likely_regime = most_likely_regime,
-    num_transitions = num_transitions,
+    num_transitions = transitions,
     transition_rate = transition_rate,
-    durations = durations,
     avg_durations = avg_durations,
-    regime_counts = regime_counts,
-    regime_percentages = regime_percentages
+    regime_percentages = regime_percentages,
+    regime_sequence = regime_sequence
   ))
 }
 
@@ -1189,3 +1162,4 @@ format_time <- function(seconds) {
     return(sprintf("%dh %dm", hours, minutes))
   }
 }
+  
