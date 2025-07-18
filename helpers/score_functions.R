@@ -1161,3 +1161,304 @@ validate_score_inputs <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   
   return(TRUE)
 }
+
+
+
+#' Calculate Fisher Information matrix using robust Gauss-Hermite quadrature
+#'
+#' @param mu Vector of regime means (length K)
+#' @param sigma2 Vector of regime variances (length K)
+#' @param X_t_prev Previous filtered probabilities (length K)
+#' @param p_trans Current transition probabilities (length K*(K-1))
+#' @param gh_setup Gauss-Hermite quadrature setup from setup_gauss_hermite_quadrature()
+#' @param K Number of regimes
+#' @param min_density_threshold Minimum density threshold for numerical stability (default: 1e-12)
+#' @return Fisher Information value (scalar)
+calculate_fisher_information_robust <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K, 
+                                                min_density_threshold = 1e-12) {
+  
+  # Validate inputs (same as before)
+  validate_fisher_inputs(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
+  
+  # Extract quadrature nodes and weights
+  nodes <- gh_setup$nodes
+  weights <- gh_setup$weights
+  n_nodes <- gh_setup$n_nodes
+  
+  # Initialize Fisher Information accumulator
+  fisher_info <- 0.0
+  
+  # Parameters for the quadrature weight function
+  mu_weights <- gh_setup$mu_quad
+  sigma_weights <- gh_setup$sigma_quad
+  
+  # Pre-calculate transition matrix to avoid repeated computation
+  p_trans_valid <- convert_to_valid_probs(p_trans, K)
+  transition_mat <- transition_matrix(p_trans_valid, check_validity = FALSE)
+  X_pred <- as.vector(transition_mat %*% X_t_prev)
+  
+  # Ensure predicted probabilities are valid
+  X_pred <- pmax(X_pred, min_density_threshold)
+  X_pred <- X_pred / sum(X_pred)  # Renormalize
+  
+  # Track numerical issues for diagnostics
+  zero_density_count <- 0
+  total_nodes <- 0
+  
+  # Numerical integration using Gauss-Hermite quadrature
+  for (j in 1:n_nodes) {
+    total_nodes <- total_nodes + 1
+    
+    # Current quadrature node (y-value)
+    y_node <- nodes[j]
+    current_weight <- weights[j]
+    
+    # Calculate regime densities at this node
+    regime_densities <- numeric(K)
+    for (k in 1:K) {
+      regime_densities[k] <- dnorm(y_node, mu[k], sqrt(sigma2[k]))
+    }
+    
+    # Check for invalid regime densities
+    if (any(!is.finite(regime_densities)) || any(regime_densities < 0)) {
+      zero_density_count <- zero_density_count + 1
+      next  # Skip this node
+    }
+    
+    # Calculate total density (denominator)
+    total_density <- sum(regime_densities * X_pred)
+    
+    # Apply minimum threshold for numerical stability
+    if (total_density < min_density_threshold) {
+      zero_density_count <- zero_density_count + 1
+      next  # Skip this node instead of using invalid density
+    }
+    
+    # Calculate Fisher Information components
+    info_star <- 0.0
+    
+    # Calculate all pairwise likelihood differences
+    for (i in 1:K) {
+      for (l in 1:K) {
+        if (i != l) {  # Only consider different regimes
+          
+          # Likelihood difference between regimes i and l
+          likelihood_diff <- regime_densities[i] - regime_densities[l]
+          
+          # Contribution to Fisher Information
+          info_contribution <- (likelihood_diff^2) / total_density
+          
+          # Weight by the probability of being in regime i
+          regime_weight <- X_pred[i]
+          
+          info_star <- info_star + regime_weight * info_contribution
+        }
+      }
+    }
+    
+    # Apply the quadrature weight function correction
+    weight_correction <- sqrt(2 * pi * sigma_weights^2) * 
+      exp((y_node - mu_weights)^2 / (2 * sigma_weights^2))
+    
+    info_star <- info_star * weight_correction
+    
+    # Check for invalid contribution
+    if (!is.finite(info_star) || info_star < 0) {
+      zero_density_count <- zero_density_count + 1
+      next  # Skip invalid contributions
+    }
+    
+    # Add weighted contribution to Fisher Information
+    fisher_info <- fisher_info + info_star * current_weight
+  }
+  
+  # Diagnostic information
+  valid_nodes <- total_nodes - zero_density_count
+  if (zero_density_count > 0) {
+    skip_percentage <- 100 * zero_density_count / total_nodes
+    if (skip_percentage > 20) {  # Only warn if >20% of nodes skipped
+      warning(paste("Skipped", zero_density_count, "out of", total_nodes, 
+                    "quadrature nodes (", round(skip_percentage, 1), 
+                    "%) due to numerical issues in Fisher Information calculation"))
+    }
+  }
+  
+  # Ensure Fisher Information is valid
+  if (!is.finite(fisher_info) || fisher_info <= 0) {
+    if (valid_nodes == 0) {
+      warning("All quadrature nodes produced invalid densities. Using minimal Fisher Information.")
+      fisher_info <- min_density_threshold
+    } else {
+      warning("Fisher Information calculation resulted in invalid value. Using fallback.")
+      fisher_info <- 1.0  # Fallback to unit information
+    }
+  }
+  
+  # Ensure we don't have effectively zero information
+  fisher_info <- max(fisher_info, min_density_threshold)
+  
+  # Add enhanced attributes for debugging
+  attr(fisher_info, "quadrature_info") <- list(
+    n_nodes = n_nodes,
+    valid_nodes = valid_nodes,
+    skipped_nodes = zero_density_count,
+    skip_percentage = 100 * zero_density_count / total_nodes,
+    node_range = range(nodes),
+    weight_sum = sum(weights),
+    mu_weights = mu_weights,
+    sigma_weights = sigma_weights
+  )
+  
+  attr(fisher_info, "regime_info") <- list(
+    K = K,
+    mu_range = range(mu),
+    sigma2_range = range(sigma2),
+    X_t_prev_entropy = -sum(X_t_prev * log(pmax(X_t_prev, min_density_threshold))),
+    X_pred_entropy = -sum(X_pred * log(pmax(X_pred, min_density_threshold))),
+    min_regime_density = min(regime_densities),
+    max_regime_density = max(regime_densities)
+  )
+  
+  return(fisher_info)
+}
+
+
+
+#' Calculate properly scaled GAS score vector with robust Fisher Information
+#'
+#' @param y_t Current observation at time t
+#' @param mu Vector of regime means (length K)
+#' @param sigma2 Vector of regime variances (length K)
+#' @param X_t_lag Predicted probabilities before observation (length K)
+#' @param X_t_prev Filtered probabilities from previous time step (length K)
+#' @param p_trans Current transition probabilities (length K*(K-1))
+#' @param gh_setup Gauss-Hermite quadrature setup from setup_gauss_hermite_quadrature()
+#' @param K Number of regimes
+#' @param scaling_method Method for scaling ("moore_penrose", "simple", "normalized", or "original")
+#' @param min_density_threshold Minimum density threshold for numerical stability (default: 1e-12)
+#' @return Properly scaled score vector (length K*(K-1))
+calculate_gas_score_robust <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_trans, 
+                                       gh_setup, K, scaling_method = "moore_penrose",
+                                       min_density_threshold = 1e-12) {
+  # Validate all inputs (same validation as original)
+  if (!is.numeric(y_t) || length(y_t) != 1) {
+    stop("y_t must be a numeric scalar")
+  }
+  
+  if (has_invalid_values(y_t)) {
+    stop("y_t contains invalid values (NA, NaN, or Inf)")
+  }
+  
+  validate_fisher_inputs(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
+  
+  if (!is.numeric(X_t_lag) || length(X_t_lag) != K) {
+    stop("X_t_lag must be a numeric vector of length K")
+  }
+  
+  if (any(X_t_lag < 0) || any(X_t_lag > 1) || abs(sum(X_t_lag) - 1) > 1e-10) {
+    stop("X_t_lag must be valid probabilities that sum to 1")
+  }
+  
+  scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
+  
+  # Step 1: Calculate regime likelihoods for the current observation
+  eta <- numeric(K)
+  for (k in 1:K) {
+    eta[k] <- dnorm(y_t, mu[k], sqrt(sigma2[k]))
+  }
+  
+  # Calculate total likelihood
+  tot_lik <- sum(eta * X_t_lag)
+  
+  # Protect against numerical issues
+  if (tot_lik <= min_density_threshold || !is.finite(tot_lik)) {
+    warning("Total likelihood is too small or invalid. Using fallback calculation.")
+    # In case of numerical issues, return zero score
+    return(rep(0, K*(K-1)))
+  }
+  
+  # Step 2: Calculate raw score vector
+  raw_score <- calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
+  
+  # If raw score is essentially zero, return it as-is
+  if (all(abs(raw_score) < min_density_threshold)) {
+    attr(raw_score, "calculation_info") <- list(
+      method = "zero_score",
+      y_t = y_t,
+      tot_lik = tot_lik,
+      fisher_info = NA,
+      scaling_method = scaling_method
+    )
+    return(raw_score)
+  }
+  
+  # Step 3: Calculate Fisher Information using ROBUST version
+  fisher_info <- calculate_fisher_information_robust(
+    mu, sigma2, X_t_prev, p_trans, gh_setup, K, min_density_threshold
+  )
+  
+  # Step 4: Apply appropriate scaling method
+  if (scaling_method == "original") {
+    # Use the original 2-regime methodology
+    g_vector <- attr(raw_score, "g_components")
+    if (is.null(g_vector)) {
+      # Recalculate g_vector if not available
+      g_vector <- numeric(K*(K-1))
+      idx <- 1
+      for (i in 1:K) {
+        for (j in 1:K) {
+          if (i != j) {
+            g_vector[idx] <- X_t_prev[i] * p_trans[idx] * (1 - p_trans[idx])
+            idx <- idx + 1
+          }
+        }
+      }
+    }
+    scaled_score <- calculate_original_scaling(raw_score, fisher_info, g_vector)
+  } else {
+    # Use Moore-Penrose or other modern scaling methods
+    scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, scaling_method)
+  }
+  
+  # Step 5: Final validation and cleanup
+  if (has_invalid_values(scaled_score)) {
+    warning("Scaled score contains invalid values. Using conservative fallback.")
+    # Conservative fallback: small scaled version of raw score
+    score_norm <- sqrt(sum(raw_score^2))
+    if (score_norm > 0) {
+      scaled_score <- raw_score / score_norm * 0.01  # Very conservative scaling
+    } else {
+      scaled_score <- rep(0, K*(K-1))
+    }
+  }
+  
+  # Add comprehensive attributes for debugging and analysis
+  attr(scaled_score, "calculation_info") <- list(
+    y_t = y_t,
+    tot_lik = tot_lik,
+    fisher_info = fisher_info,
+    scaling_method = scaling_method,
+    raw_score_norm = sqrt(sum(raw_score^2)),
+    scaled_score_norm = sqrt(sum(scaled_score^2)),
+    regime_likelihoods = eta,
+    most_likely_regime = which.max(eta),
+    likelihood_spread = max(eta) - min(eta),
+    min_density_threshold = min_density_threshold
+  )
+  
+  # Add Fisher Information diagnostics
+  fisher_quad_info <- attr(fisher_info, "quadrature_info")
+  if (!is.null(fisher_quad_info)) {
+    attr(scaled_score, "fisher_diagnostics") <- fisher_quad_info
+  }
+  
+  attr(scaled_score, "regime_diagnostics") <- list(
+    K = K,
+    filtered_prob_entropy = -sum(X_t_prev * log(pmax(X_t_prev, min_density_threshold))),
+    predicted_prob_entropy = -sum(X_t_lag * log(pmax(X_t_lag, min_density_threshold))),
+    max_transition_prob = max(p_trans),
+    min_transition_prob = min(p_trans)
+  )
+  
+  return(scaled_score)
+}
