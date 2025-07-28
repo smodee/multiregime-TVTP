@@ -30,6 +30,10 @@ if (!require(fastGHQuad, quietly = TRUE)) {
 #' the quadrature is centered around the median of the data with scale based on
 #' the standard deviation.
 #'
+#' IMPORTANT: The integration domain is limited to ±4 standard deviations to avoid
+#' numerical issues where regime densities become negligible (< 1e-10). This prevents
+#' quadrature node failures that can bias parameter estimation toward zero.
+#'
 #' The "data_based" method uses median(y) and sd(y) as in the original implementation.
 #' The "standardized" method uses mean=0, sd=1 for standardized integration.
 #'
@@ -55,56 +59,81 @@ setup_gauss_hermite_quadrature <- function(y, n_nodes = 30, method = "data_based
   
   method <- match.arg(method, c("data_based", "standardized"))
   
-  # Check for invalid values in y
+  # Check for invalid values in y and clean data
   if (has_invalid_values(y)) {
     warning("Input data contains NA, NaN, or infinite values. These will be removed.")
-    y <- y[!is.na(y) & !is.nan(y) & is.finite(y)]
+    y_clean <- y[!is.na(y) & !is.nan(y) & is.finite(y)]
     
-    if (length(y) == 0) {
+    if (length(y_clean) == 0) {
       stop("No valid data points remaining after removing invalid values")
     }
+  } else {
+    y_clean <- y
   }
   
-  # Generate Gauss-Hermite quadrature nodes and weights
+  # Generate standard Gauss-Hermite quadrature nodes and weights
+  # This gives us nodes and weights for standard normal N(0,1)
   gh_data <- gaussHermiteData(n_nodes)
   
   # Determine quadrature parameters based on method
   if (method == "data_based") {
-    # Use data characteristics (following original implementation)
-    mu_quad <- median(y, na.rm = TRUE)
-    sigma_quad <- sd(y, na.rm = TRUE)
+    # Use data characteristics for centering and scaling
+    mu_quad <- median(y_clean, na.rm = TRUE)
+    sigma_quad <- sd(y_clean, na.rm = TRUE)
     
     # Protect against zero variance
     if (sigma_quad <= 0 || is.na(sigma_quad)) {
       warning("Data has zero or invalid variance. Using unit variance for quadrature.")
       sigma_quad <- 1.0
     }
-  } else {  # standardized
-    # Use standardized parameters
+    
+    # CRITICAL FIX: Limit the integration domain to ±4 standard deviations
+    # This prevents numerical issues where regime densities become negligible
+    # Beyond ±4σ, normal densities drop below 1e-6, causing Fisher Information
+    # calculation failures that bias A parameters toward zero
+    node_range <- 4.0  # Covers 99.99% of probability mass
+    
+    # Transform nodes from standard to limited data-appropriate range
+    # Instead of letting nodes go to ±∞, we constrain them to reasonable values
+    raw_nodes <- gh_data$x  # These are from standard normal
+    node_scale <- node_range / max(abs(raw_nodes))  # Scale factor to limit range
+    
+    # Apply the transformation: center at mu_quad, scale by sigma_quad, but limit range
+    nodes <- mu_quad + sigma_quad * node_scale * raw_nodes
+    weights <- gh_data$w / sqrt(pi)  # Standard Gauss-Hermite normalization
+    
+  } else {  # standardized method
+    # Use standardized parameters without range limitation for comparison
     mu_quad <- 0.0
     sigma_quad <- 1.0
+    
+    # Standard transformation for comparison/reference
+    nodes <- sqrt(2) * gh_data$x
+    weights <- gh_data$w / sqrt(pi)
   }
   
-  # Transform nodes from standard normal to desired distribution
-  # Standard Gauss-Hermite is for N(0,1), transform to N(mu_quad, sigma_quad^2)
-  nodes <- mu_quad + sqrt(2) * sigma_quad * gh_data$x
-  weights <- gh_data$w / sqrt(pi)  # Normalize weights for proper integration
+  # Store additional information for diagnostics
+  mu <- if (method == "data_based") mu_quad else 0.0
+  sigma <- if (method == "data_based") sigma_quad else 1.0
   
-  # Create the setup object
+  # Create the setup object with comprehensive information
   setup <- list(
     nodes = nodes,
     weights = weights,
     n_nodes = n_nodes,
-    mu_quad = mu_quad,
+    mu = mu,              # Keep as 'mu' for backward compatibility
+    sigma = sigma,        # Keep as 'sigma' for backward compatibility  
+    mu_quad = mu_quad,    # Explicit quadrature parameters
     sigma_quad = sigma_quad,
     method = method,
+    node_range_limit = if (method == "data_based") node_range else NULL,
     data_characteristics = list(
-      n_obs = length(y),
-      mean_y = mean(y, na.rm = TRUE),
-      median_y = median(y, na.rm = TRUE),
-      sd_y = sd(y, na.rm = TRUE),
-      min_y = min(y, na.rm = TRUE),
-      max_y = max(y, na.rm = TRUE)
+      n_obs = length(y_clean),
+      mean_y = mean(y_clean, na.rm = TRUE),
+      median_y = median(y_clean, na.rm = TRUE),
+      sd_y = sd(y_clean, na.rm = TRUE),
+      min_y = min(y_clean, na.rm = TRUE),
+      max_y = max(y_clean, na.rm = TRUE)
     )
   )
   
