@@ -1776,13 +1776,14 @@ Rfiltering.single.natural_GAS_with_fallback <- function(par, y, B_burnin, C,
 #' @param max_iterations Maximum number of optimization iterations (default: 1000)
 #' @param factr Controls precision of L-BFGS-B (default: 1e7)
 #' @param A_threshold Threshold below which to use constant model (default: 1e-4)
+#' @param n_starts Number of starting points for optimization robustness (default: 3)
 #' @param verbose Whether to print progress information (default: TRUE)
 #' @return List with estimated parameters and model diagnostics
 estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50, 
                                              initial_params = NULL,
                                              n_nodes = 30, scaling_method = "moore_penrose",
                                              max_iterations = 1000, factr = 1e7,
-                                             A_threshold = 1e-4, verbose = TRUE) {
+                                             A_threshold = 1e-4, n_starts = 3, verbose = TRUE) {
   if (verbose) {
     cat("Estimating GAS model with automatic fallback (A threshold =", A_threshold, ")\n")
     start_time <- Sys.time()
@@ -1857,8 +1858,7 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
     cat("Initial negative log-likelihood:", round(test_result, 4), "\n")
   }
   
-  # Try multiple starting points for robustness
-  n_starts <- 3
+  # Try multiple starting points for robustness (if n_starts > 1)
   best_result <- NULL
   best_likelihood <- Inf
   
@@ -1899,7 +1899,7 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
         A_threshold = A_threshold
       )
     }, error = function(e) {
-      if (verbose) cat("Starting point", start_i, "failed initial test:", e$message, "\n")
+      if (verbose && n_starts > 1) cat("Starting point", start_i, "failed initial test:", e$message, "\n")
       return(Inf)
     })
     
@@ -1925,12 +1925,12 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
           control = list(
             maxit = max_iterations,
             factr = factr,
-            trace = 0,  # Silent for multiple starts
+            trace = if (verbose && n_starts == 1) 1 else 0,  # Show trace only for single start
             REPORT = 100
           )
         )
       }, error = function(e) {
-        if (verbose) cat("Optimization failed for starting point", start_i, ":", e$message, "\n")
+        if (verbose && n_starts > 1) cat("Optimization failed for starting point", start_i, ":", e$message, "\n")
         return(NULL)
       })
       
@@ -1956,8 +1956,10 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
     cat("Optimization completed\n")
     cat("Optimization convergence code:", optimization_result$convergence, "\n")
     cat("Final negative log-likelihood:", optimization_result$value, "\n")
-    cat("Function evaluations:", optimization_result$counts[1], "\n")
-    cat("Gradient evaluations:", optimization_result$counts[2], "\n")
+    if (!is.null(optimization_result$counts)) {
+      cat("Function evaluations:", optimization_result$counts[1], "\n")
+      cat("Gradient evaluations:", optimization_result$counts[2], "\n")
+    }
   }
   
   # Extract estimated parameters (already in natural space)
@@ -1984,7 +1986,7 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
   full_likelihood <- tryCatch({
     Rfiltering_GAS_with_fallback(
       mu_est, sigma2_est, init_trans_est, A_est, B_est, y, B_burnin, C, 
-      n_nodes, scaling_method, A_threshold, verbose = TRUE
+      n_nodes, scaling_method, A_threshold, verbose = FALSE
     )
   }, error = function(e) {
     stop(paste("Failed to calculate final model outputs with estimated parameters:", e$message))
@@ -2027,7 +2029,8 @@ estimate_gas_model_with_fallback <- function(y, K = 3, B_burnin = 100, C = 50,
       scaling_method = scaling_method,
       A_threshold = A_threshold,
       optimization_method = "L-BFGS-B",
-      max_A_estimated = max(abs(A_est))
+      max_A_estimated = max(abs(A_est)),
+      n_starts_used = n_starts
     )
   )
   
