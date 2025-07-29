@@ -75,6 +75,29 @@ count_regime <- function(par) {
   return(as.integer(K))
 }
 
+#' Count the number of regimes from a parameter vector for GAS model
+#'
+#' @param par Parameter vector
+#' @return Number of regimes
+count_regime_GAS <- function(par) {
+  # For GAS model: K + K + K*(K-1) + K*(K-1) + K*(K-1) = 3K^2 - K
+  # So: 3K^2 - K - length(par) = 0
+  # Using quadratic formula: K = (1 + sqrt(1 + 12*length(par)))/6
+  discriminant <- 1 + 12*length(par)
+  if (discriminant < 0) {
+    stop("Invalid parameter vector length for GAS model")
+  }
+  
+  K <- (1 + sqrt(discriminant))/6
+  
+  if (abs(K - round(K)) > 1e-10) {
+    stop(paste("The parameter vector length", length(par), 
+               "is not compatible with any valid number of regimes."))
+  }
+  
+  return(round(K))
+}
+
 #' Transform parameters from natural space to unconstrained space for TVP model
 #'
 #' @param par Parameters in their natural space
@@ -155,25 +178,57 @@ untransform_TVPXExo <- function(par_t) {
   return(c(mu, exp(log_sigma2), logistic(logit_init_trans), A))
 }
 
-# For backward compatibility - these will be deprecated in future versions
-Rpar.trasf_TVPXExo <- function(par_t) {
-  warning("This function is deprecated. Please use untransform_TVPXExo() instead.")
-  return(untransform_TVPXExo(par_t))
+#' Transform parameters from natural space to unconstrained space for GAS model
+#'
+#' @param par Parameters in their natural space
+#' @return Parameters in unconstrained space
+#' @details
+#' Applies log transformation to variances, logit to transition probabilities,
+#' and logit to A and B coefficients to make parameters suitable for unconstrained optimization.
+transform_GAS <- function(par) {
+  K <- count_regime_GAS(par)
+  n_transition <- K*(K-1)
+  
+  mu <- par[1:K]
+  sigma2 <- par[(K+1):(2*K)]
+  init_trans <- par[(2*K+1):(2*K+n_transition)]
+  A <- par[(2*K+n_transition+1):(2*K+2*n_transition)]
+  B <- par[(2*K+2*n_transition+1):(2*K+3*n_transition)]
+  
+  if (any(sigma2 <= 0)) {
+    stop("Variance parameters must be positive")
+  }
+  if (any(init_trans <= 0) || any(init_trans >= 1)) {
+    stop("Transition probabilities must be between 0 and 1")
+  }
+  if (any(A < 0) || any(A > 1)) {
+    stop("A parameters must be between 0 and 1")
+  }
+  if (any(B < 0) || any(B > 1)) {
+    stop("B parameters must be between 0 and 1")
+  }
+  
+  return(c(mu, log(sigma2), logit(init_trans), logit(A), logit(B)))
 }
 
-Rpar.trasf.inv_TVPXExo <- function(par) {
-  warning("This function is deprecated. Please use transform_TVPXExo() instead.")
-  return(transform_TVPXExo(par))
-}
-
-Rpar.trasf_TVP <- function(par_t) {
-  warning("This function is deprecated. Please use untransform_TVP() instead.")
-  return(untransform_TVP(par_t))
-}
-
-Rpar.trasf.inv_TVP <- function(par) {
-  warning("This function is deprecated. Please use transform_TVP() instead.")
-  return(transform_TVP(par))
+#' Transform parameters from unconstrained space back to natural space for GAS model
+#'
+#' @param par_t Parameters in unconstrained space
+#' @return Parameters in their natural space
+#' @details
+#' Applies exp transformation to log-variances, logistic to logit-probabilities,
+#' and logistic to logit-coefficients to convert back to naturally bounded parameters.
+untransform_GAS <- function(par_t) {
+  K <- count_regime_GAS(par_t)
+  n_transition <- K*(K-1)
+  
+  mu_t <- par_t[1:K]
+  sigma2_t <- par_t[(K+1):(2*K)]
+  init_trans_t <- par_t[(2*K+1):(2*K+n_transition)]
+  A_t <- par_t[(2*K+n_transition+1):(2*K+2*n_transition)]
+  B_t <- par_t[(2*K+2*n_transition+1):(2*K+3*n_transition)]
+  
+  return(c(mu_t, exp(sigma2_t), logistic(init_trans_t), logistic(A_t), logistic(B_t)))
 }
 
 #' Check if parameter vector has valid structure
