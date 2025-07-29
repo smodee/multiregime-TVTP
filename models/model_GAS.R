@@ -48,7 +48,7 @@ source("models/model_constant.R")
 #' B_true <- rep(0.9, 6)  # Persistence parameters
 #' data_sim <- dataGASCD(10, 1000, mu_true, sigma2_true, init_trans_true, A_true, B_true)
 dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
-                      n_nodes = 30, scaling_method = "moore_penrose", quad_sample_size = 1000) {
+                      n_nodes = 30, scaling_method = "simple", quad_sample_size = 1000) {
   # Parameters:
   # M                 Number of simulation runs to be performed
   # N                 Length of the simulation runs (discretized time)
@@ -603,7 +603,7 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C,
 #' results <- estimate_gas_model(data, K=3, use_fallback=FALSE)
 estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50, 
                                initial_params = NULL, bounds = NULL,
-                               n_nodes = 30, scaling_method = "moore_penrose",
+                               n_nodes = 30, scaling_method = "simple",
                                use_fallback = TRUE, A_threshold = 1e-4,
                                verbose = TRUE) {
   if (verbose) {

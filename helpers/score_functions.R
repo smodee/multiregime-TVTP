@@ -1,13 +1,20 @@
 #' GAS Score-Driven Helper Functions
 #' 
-#' Functions for calculating properly scaled scores in Generalized Autoregressive
-#' Score (GAS) models following Bazzi et al. (2017). These functions implement
-#' the proper score scaling methodology that uses Gauss-Hermite quadrature and
-#' Moore-Penrose pseudo-inverse scaling.
-#'
-#' Reference: Bazzi, M., Blasques, F., Koopman, S.J., & Lucas, A. (2017).
-#' Time-Varying Transition Probabilities for Markov Regime Switching Models.
-#' Journal of Time Series Analysis, 38(3), 458-478.
+#' IMPORTANT: This file contains both PRODUCTION-READY and EXPERIMENTAL functions.
+#' 
+#' PRODUCTION-READY (recommended for parameter estimation):
+#' - calculate_gas_score() with scaling_method = "simple" (default)
+#' - apply_moore_penrose_scaling() with method = "simple" or "normalized"  
+#' - setup_gauss_hermite_quadrature()
+#' 
+#' EXPERIMENTAL (research only, not for estimation):
+#' - calculate_gas_score_robust() - causes optimization instability
+#' - calculate_fisher_information_robust() - computationally intensive
+#' - Any functions using Moore-Penrose pseudo-inverse scaling
+#' 
+#' The experimental functions implement theoretically correct Moore-Penrose 
+#' scaling from Bazzi et al. (2017) but are numerically unstable for optimization.
+#' Use simple scaling methods for reliable parameter estimation.
 
 # Load required helper functions
 source("helpers/utility_functions.R")
@@ -292,7 +299,18 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #'                                    p_trans, gh_setup, K, 
 #'                                    scaling_method = "original")
 calculate_gas_score <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_trans, 
-                                gh_setup, K, scaling_method = "moore_penrose") {
+                                gh_setup, K, scaling_method = "simple") {
+  if (scaling_method == "moore_penrose") {
+    warning(
+      paste(
+        "WARNING: scaling_method='moore_penrose' is EXPERIMENTAL.",
+        "For parameter estimation, use 'simple' (default) instead.",
+        "Moore-Penrose scaling can cause optimization failures."
+      ),
+      call. = FALSE
+    )
+  }
+  
   # Validate all inputs
   if (!is.numeric(y_t) || length(y_t) != 1) {
     stop("y_t must be a numeric scalar")
@@ -312,7 +330,7 @@ calculate_gas_score <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_trans,
     stop("X_t_lag must be valid probabilities that sum to 1")
   }
   
-  scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
+  scaling_method <- match.arg(scaling_method, c("simple", "normalized", "original", "moore_penrose"))
   
   # Step 1: Calculate regime likelihoods for the current observation
   eta <- numeric(K)
@@ -559,7 +577,19 @@ print_gas_score_summary <- function(scaled_score, ...) {
 #' 
 #' # Use simple scaling method
 #' scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, method = "simple")
-apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "moore_penrose") {
+apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "simple") {
+  if (method == "moore_penrose") {
+    warning(
+      paste(
+        "WARNING: method='moore_penrose' is EXPERIMENTAL and NOT recommended for estimation.",
+        "It can cause optimization algorithms to fail due to numerical instability.",
+        "For parameter estimation, use method='simple' (default) or 'normalized' instead.",
+        "Moore-Penrose scaling is kept for research/comparison purposes only."
+      ),
+      call. = FALSE
+    )
+  }
+  
   # Validate inputs
   if (!is.numeric(raw_score) || length(raw_score) == 0) {
     stop("raw_score must be a non-empty numeric vector")
@@ -1205,6 +1235,13 @@ validate_score_inputs <- function(eta, tot_lik, X_t_prev, p_trans, K) {
 #' @return Fisher Information value (scalar)
 calculate_fisher_information_robust <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K, 
                                                 min_density_threshold = 1e-12) {
+  .Deprecated(
+    msg = paste(
+      "calculate_fisher_information_robust() is EXPERIMENTAL.",
+      "It uses complex quadrature that can be computationally unstable.",
+      "This function is kept for research purposes only."
+    )
+  )
   
   # Validate inputs (same as before)
   validate_fisher_inputs(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
@@ -1367,8 +1404,17 @@ calculate_fisher_information_robust <- function(mu, sigma2, X_t_prev, p_trans, g
 #' @param min_density_threshold Minimum density threshold for numerical stability (default: 1e-12)
 #' @return Properly scaled score vector (length K*(K-1))
 calculate_gas_score_robust <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_trans, 
-                                       gh_setup, K, scaling_method = "moore_penrose",
+                                       gh_setup, K, scaling_method = "simple",
                                        min_density_threshold = 1e-12) {
+  .Deprecated(
+    msg = paste(
+      "calculate_gas_score_robust() is EXPERIMENTAL and NOT suitable for parameter estimation.",
+      "It uses complex Moore-Penrose scaling that causes optimization instability.",
+      "For estimation, use calculate_gas_score() with scaling_method='simple' instead.",
+      "This function is kept for research/comparison purposes only."
+    )
+  )
+  
   # Validate all inputs (same validation as original)
   if (!is.numeric(y_t) || length(y_t) != 1) {
     stop("y_t must be a numeric scalar")
