@@ -271,17 +271,17 @@ Rfiltering_TVPXExo <- function(mu, sigma2, init_trans, A, X_Exo, y, B, C) {
 #'
 #' @examples
 #' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_TVPXExo(c(mu, sigma2, init_trans, A))
+#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A), "exogenous")
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_TVPXExo, 
 #'                 X_Exo = X_Exo, y = y, B = 100, C = 50)
 Rfiltering.single.trasf_TVPXExo <- function(par_t, X_Exo, y, B, C) {
   # Transform parameters back to original parameter space
-  par <- untransform_TVPXExo(par_t)
+  par <- untransform_parameters(par_t, "exogenous")
   
-  mu <- mean_from_par(par)
-  sigma2 <- sigma2_from_par(par)
-  init_trans <- transp_from_par(par)
-  A <- A_from_par(par)
+  mu <- mean_from_par(par, "exogenous")
+  sigma2 <- sigma2_from_par(par, "exogenous")
+  init_trans <- transp_from_par(par, "exogenous")
+  A <- A_from_par(par, "exogenous")
   
   # Calculate likelihood and return it
   l <- Rfiltering_TVPXExo(mu, sigma2, init_trans, A, X_Exo, y, B, C)
@@ -360,7 +360,7 @@ estimate_exo_model <- function(y, X_Exo, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters to unconstrained space for optimization
-  transformed_params <- transform_TVPXExo(initial_params)
+  transformed_params <- transform_parameters(initial_params, "exogenous")
   
   # Optimize parameters
   if (verbose) {
@@ -389,13 +389,13 @@ estimate_exo_model <- function(y, X_Exo, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters back to natural space
-  estimated_params <- untransform_TVPXExo(optimization_result$par)
+  estimated_params <- untransform_parameters(optimization_result$par, "exogenous")
   
   # Extract different parameter components
-  mu_est <- mean_from_par(estimated_params)
-  sigma2_est <- sigma2_from_par(estimated_params)
-  init_trans_est <- transp_from_par(estimated_params)
-  A_est <- A_from_par(estimated_params)
+  mu_est <- mean_from_par(estimated_params, "exogenous")
+  sigma2_est <- sigma2_from_par(estimated_params, "exogenous")
+  init_trans_est <- transp_from_par(estimated_params, "exogenous")
+  A_est <- A_from_par(estimated_params, "exogenous")
   
   # Calculate model diagnostics
   num_params <- length(optimization_result$par)

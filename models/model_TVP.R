@@ -278,17 +278,17 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
 #'
 #' @examples
 #' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_TVP(c(mu, sigma2, init_trans, A))
+#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A), "tvp")
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_TVP, 
 #'                 y = y, B = 100, C = 50)
 Rfiltering.single.trasf_TVP <- function(par_t, y, B, C) {
   # Transform parameters back to original parameter space
-  par <- untransform_TVP(par_t)
+  par <- untransform_parameters(par_t, "tvp")
   
-  mu <- mean_from_par(par)
-  sigma2 <- sigma2_from_par(par)
-  init_trans <- transp_from_par(par)
-  A <- A_from_par(par)
+  mu <- mean_from_par(par, "tvp")
+  sigma2 <- sigma2_from_par(par, "tvp")
+  init_trans <- transp_from_par(par, "tvp")
+  A <- A_from_par(par, "tvp")
   
   # Calculate likelihood and return it
   l <- Rfiltering_TVP(mu, sigma2, init_trans, A, y, B, C)
@@ -365,7 +365,7 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters to unconstrained space for optimization
-  transformed_params <- transform_TVP(initial_params)
+  transformed_params <- transform_parameters(initial_params, "tvp")
   
   # Optimize parameters
   if (verbose) {
@@ -393,13 +393,13 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters back to natural space
-  estimated_params <- untransform_TVP(optimization_result$par)
+  estimated_params <- untransform_parameters(optimization_result$par, "tvp")
   
   # Extract different parameter components
-  mu_est <- mean_from_par(estimated_params)
-  sigma2_est <- sigma2_from_par(estimated_params)
-  init_trans_est <- transp_from_par(estimated_params)
-  A_est <- A_from_par(estimated_params)
+  mu_est <- mean_from_par(estimated_params, "tvp")
+  sigma2_est <- sigma2_from_par(estimated_params, "tvp")
+  init_trans_est <- transp_from_par(estimated_params, "tvp")
+  A_est <- A_from_par(estimated_params, "tvp")
   
   # Calculate model diagnostics
   num_params <- length(optimization_result$par)
@@ -450,216 +450,6 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
     cat("Estimated means:", round(mu_est, 4), "\n")
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
   }
-  
-  return(results)
-}
-
-#' Simulate and estimate a TVP model with specified parameters
-#'
-#' @param M Number of simulation paths
-#' @param N Length of each simulation path
-#' @param mu True regime means
-#' @param sigma2 True regime variances
-#' @param init_trans True initial transition probabilities
-#' @param A True autoregressive coefficients
-#' @param B Burn-in period
-#' @param C Cut-off period
-#' @param verbose Whether to print progress information
-#' @return List with simulation results and estimation results
-#' @details
-#' This function simulates data from a TVP model and then estimates 
-#' the model parameters, providing a way to test the estimation procedure
-#' with known parameters.
-#'
-#' @examples
-#' # Test estimation with 10 simulated paths
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' init_trans_true <- rep(0.2, 6)
-#' A_true <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)
-#' results <- example_TVP_simulation(10, 1000, mu_true, sigma2_true, init_trans_true, A_true)
-example_TVP_simulation <- function(M = 10, N = 1000, 
-                                   mu = c(-2, 1, 2), 
-                                   sigma2 = c(0.02, 0.2, 0.6), 
-                                   init_trans = rep(0.2, 6), 
-                                   A = c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2),
-                                   B = 100, C = 50, verbose = TRUE) {
-  # Parameters
-  K <- length(mu)    # Number of regimes
-  
-  if (verbose) {
-    cat("Setting up parameters for TVP simulation...\n")
-    cat("Regimes:", K, "\n")
-    cat("Means:", mu, "\n")
-    cat("Variances:", sigma2, "\n")
-  }
-  
-  # Generate simulation data
-  if (verbose) {
-    cat("Generating simulation data for", M, "paths, each with length", N, "...\n")
-    start_time <- Sys.time()
-  }
-  
-  data_TVP_sim <- dataTVPCD(M, N, mu, sigma2, init_trans, A)
-  
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Data generation completed in", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-  }
-  
-  # Storage for estimation results
-  param_estimates <- matrix(0, M, 2*K^2)
-  colnames(param_estimates) <- c(paste0("mu", 1:K), 
-                                 paste0("sigma2", 1:K), 
-                                 paste0("trans", 1:(K*(K-1))), 
-                                 paste0("A", 1:(K*(K-1))))
-  diagnostics <- matrix(0, M, 3)
-  colnames(diagnostics) <- c("loglik", "aic", "bic")
-  
-  # Estimate parameters for each simulation path
-  if (verbose) {
-    cat("Starting parameter estimation for", M, "simulation paths...\n")
-    total_start_time <- Sys.time()
-  }
-  
-  for (i in 1:M) {
-    if (verbose) {
-      path_start_time <- Sys.time()
-      cat("Processing path", i, "of", M, "... ")
-    }
-    
-    # Extract the current simulation path
-    current_data <- data_TVP_sim[i,]
-    
-    # Initial parameter guesses for optimization
-    mu_guess <- mu * 0.9 + rnorm(K, 0, 0.1*abs(mu))  # Add noise to true values
-    sigma2_guess <- sigma2 * 0.9 + rnorm(K, 0, 0.1*sigma2)  # Add noise to true values
-    init_trans_guess <- pmax(pmin(init_trans + rnorm(K*(K-1), 0, 0.05), 0.95), 0.05)  # Add noise, keep in (0,1)
-    A_guess <- rep(0, K*(K-1))  # Start with no effect
-    
-    par_guess <- c(mu_guess, sigma2_guess, init_trans_guess, A_guess)
-    
-    # Set parameter bounds
-    D <- 1e-3  # Small value to avoid boundary issues
-    lower_bounds <- c(rep(-Inf, K),           # No bounds on means
-                      rep(-Inf, K),           # Variance >= 0 (log-transformed)
-                      rep(-Inf, K*(K-1)),     # Probabilities >= 0 (logit-transformed)
-                      rep(-1, K*(K-1)))       # A-coefficients bounded
-    
-    upper_bounds <- c(rep(Inf, K),            # No bounds on means
-                      rep(Inf, K),            # Variance unbounded
-                      rep(Inf, K*(K-1)),      # Probabilities <= 1 (logit-transformed)
-                      rep(1, K*(K-1)))        # A-coefficients bounded
-    
-    # Estimate the model
-    TVP_est <- try(nlminb(
-      start = transform_TVP(par_guess),
-      objective = Rfiltering.single.trasf_TVP, 
-      lower = lower_bounds,
-      upper = upper_bounds,
-      y = current_data,
-      B = B, 
-      C = C,
-      control = list(eval.max = 1e6, iter.max = 1e6, trace = 0)
-    ), silent = TRUE)
-    
-    if (!inherits(TVP_est, "try-error")) {
-      # Transform parameters back to natural space
-      TVP_par_fin <- untransform_TVP(TVP_est$par)
-      
-      # Store the parameter estimates
-      param_estimates[i,] <- TVP_par_fin
-      
-      # Store diagnostics
-      num_params <- length(TVP_est$par)
-      diagnostics[i, 1] <- -TVP_est$objective
-      diagnostics[i, 2] <- 2 * TVP_est$objective + 2 * num_params
-      diagnostics[i, 3] <- 2 * TVP_est$objective + num_params * log(N - B - C)
-      
-      if (verbose) {
-        path_end_time <- Sys.time()
-        path_time <- difftime(path_end_time, path_start_time, units = "secs")
-        cat("completed in", round(path_time, 2), "seconds (", 
-            formatC(TVP_est$objective, digits = 8, format = "f"), ")\n")
-      }
-    } else {
-      # Handle estimation errors
-      param_estimates[i,] <- NA
-      diagnostics[i,] <- NA
-      
-      if (verbose) {
-        cat("FAILED - Optimization error\n")
-      }
-    }
-    
-    # Estimate remaining time if verbose
-    if (verbose && i > 1) {
-      elapsed <- difftime(Sys.time(), total_start_time, units = "secs")
-      time_per_path <- as.numeric(elapsed) / i
-      remaining_paths <- M - i
-      est_remaining <- time_per_path * remaining_paths
-      
-      cat("Overall progress:", i, "/", M, "paths -", 
-          round(i/M*100), "% complete. Est. remaining time:", 
-          round(est_remaining/60, 1), "minutes\n")
-    }
-  }
-  
-  if (verbose) {
-    total_end_time <- Sys.time()
-    total_time <- difftime(total_end_time, total_start_time, units = "mins")
-    cat("\nParameter estimation completed in", 
-        format(total_time, digits = 4), "\n")
-  }
-  
-  # Calculate summary statistics for parameter estimates
-  estimates_summary <- data.frame(
-    Parameter = colnames(param_estimates),
-    True_Value = c(mu, sigma2, init_trans, A),
-    Mean_Estimate = colMeans(param_estimates, na.rm = TRUE),
-    SD_Estimate = apply(param_estimates, 2, sd, na.rm = TRUE),
-    Bias = colMeans(param_estimates, na.rm = TRUE) - c(mu, sigma2, init_trans, A),
-    Rel_Bias_Pct = 100 * (colMeans(param_estimates, na.rm = TRUE) - c(mu, sigma2, init_trans, A)) / 
-      ifelse(abs(c(mu, sigma2, init_trans, A)) > 1e-10, 
-             c(mu, sigma2, init_trans, A), 
-             1e-10)
-  )
-  
-  # Compare estimated parameters with true parameters
-  if (verbose) {
-    cat("\nParameter Estimation Summary:\n")
-    print(estimates_summary)
-    
-    cat("\nMean Log-Likelihood:", mean(diagnostics[,1], na.rm = TRUE), "\n")
-    cat("Mean AIC:", mean(diagnostics[,2], na.rm = TRUE), "\n")
-    cat("Mean BIC:", mean(diagnostics[,3], na.rm = TRUE), "\n")
-  }
-  
-  # Prepare return values
-  results <- list(
-    simulation = list(
-      data = data_TVP_sim,
-      parameters = list(
-        mu = mu,
-        sigma2 = sigma2,
-        init_trans = init_trans,
-        A = A
-      )
-    ),
-    estimation = list(
-      parameters = param_estimates,
-      diagnostics = diagnostics,
-      summary = estimates_summary
-    ),
-    settings = list(
-      M = M,
-      N = N,
-      K = K,
-      B = B,
-      C = C
-    )
-  )
   
   return(results)
 }

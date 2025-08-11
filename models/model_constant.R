@@ -226,65 +226,6 @@ Rfiltering_Const <- function(mu, sigma2, trans_prob, y, B, C) {
   return(res)
 }
 
-#' Transform parameters from natural space to unconstrained space for constant model
-#'
-#' @param par Parameters in their natural space
-#' @return Parameters in unconstrained space
-#' @details
-#' Applies log transformation to variances and logit to transition probabilities
-#' to make parameters suitable for unconstrained optimization.
-transform_Const <- function(par) {
-  mu <- mean_from_par(par)
-  sigma2 <- sigma2_from_par(par)
-  trans_prob <- transp_from_par(par)
-  
-  # Check for invalid values
-  if (any(sigma2 <= 0)) {
-    stop("Variance parameters must be positive")
-  }
-  if (any(trans_prob <= 0) || any(trans_prob >= 1)) {
-    stop("Transition probabilities must be between 0 and 1")
-  }
-  
-  return(c(mu, log(sigma2), logit(trans_prob)))
-}
-
-#' Transform parameters from unconstrained space back to natural space for constant model
-#'
-#' @param par_t Parameters in unconstrained space
-#' @return Parameters in their natural space
-#' @details
-#' Applies exp transformation to log-variances and logistic to logit-probabilities
-#' to convert back to naturally bounded parameters.
-untransform_Const <- function(par_t) {
-  K <- count_regime_const(par_t)
-  
-  mu <- par_t[1:K]
-  log_sigma2 <- par_t[(K+1):(2*K)]
-  logit_trans_prob <- par_t[(2*K+1):length(par_t)]
-  
-  return(c(mu, exp(log_sigma2), logistic(logit_trans_prob)))
-}
-
-#' Determine the number of regimes from a parameter vector length for constant model
-#'
-#' @param par Parameter vector
-#' @return Number of regimes (K)
-count_regime_const <- function(par) {
-  # For constant model, there are K means, K variances, and K(K-1) transition probabilities
-  # So total length is 2K + K(K-1) = K(K+1)
-  # We need to solve for K: K^2 + K - length(par) = 0
-  
-  # Quadratic formula: K = (-1 + sqrt(1 + 4*length(par)))/2
-  K <- (-1 + sqrt(1 + 4*length(par)))/2
-  
-  if (abs(K - round(K)) > 1e-10) {
-    stop("The parameter vector length is not compatible with any valid number of regimes.")
-  }
-  
-  return(round(K))
-}
-
 #' Wrapper for the likelihood calculator to be used for max-likelihood estimation
 #'
 #' @param par_t Transformed parameters in unconstrained space
@@ -298,18 +239,18 @@ count_regime_const <- function(par) {
 #'
 #' @examples
 #' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_Const(c(mu, sigma2, trans_prob))
+#' transformed_params <- transform_parameters(c(mu, sigma2, trans_prob), "constant")
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_Const, 
 #'                 y = y, B = 100, C = 50)
 Rfiltering.single.trasf_Const <- function(par_t, y, B, C) {
   # Transform parameters back to original parameter space
-  par <- untransform_Const(par_t)
+  par <- untransform_parameters(par_t, "constant")
   
-  K <- count_regime_const(par_t)
+  K <- count_regime(par_t, "constant")
   
-  mu <- par[1:K]
-  sigma2 <- par[(K+1):(2*K)]
-  trans_prob <- par[(2*K+1):length(par)]
+  mu <- mean_from_par(par, "constant")
+  sigma2 <- sigma2_from_par(par, "constant")
+  trans_prob <- transp_from_par(par, "constant")
   
   # Calculate likelihood and return it
   l <- Rfiltering_Const(mu, sigma2, trans_prob, y, B, C)
@@ -382,7 +323,7 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters to unconstrained space for optimization
-  transformed_params <- transform_Const(initial_params)
+  transformed_params <- transform_parameters(initial_params, "constant")
   
   # Optimize parameters
   if (verbose) {
@@ -410,12 +351,12 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Transform parameters back to natural space
-  estimated_params <- untransform_Const(optimization_result$par)
+  estimated_params <- untransform_parameters(optimization_result$par, "constant")
   
   # Extract different parameter components
-  mu_est <- estimated_params[1:K]
-  sigma2_est <- estimated_params[(K+1):(2*K)]
-  trans_prob_est <- estimated_params[(2*K+1):length(estimated_params)]
+  mu_est <- mean_from_par(estimated_params, "constant")
+  sigma2_est <- sigma2_from_par(estimated_params, "constant")
+  trans_prob_est <- transp_from_par(estimated_params, "constant")
   
   # Calculate model diagnostics
   num_params <- length(optimization_result$par)
@@ -465,197 +406,6 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
     cat("Estimated means:", round(mu_est, 4), "\n")
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
   }
-  
-  return(results)
-}
-
-#' Simulate and estimate a constant transition probability model with specified parameters
-#'
-#' @param M Number of simulation paths
-#' @param N Length of each simulation path
-#' @param mu True regime means
-#' @param sigma2 True regime variances
-#' @param trans_prob True transition probabilities
-#' @param B Burn-in period
-#' @param C Cut-off period
-#' @param verbose Whether to print progress information
-#' @return List with simulation results and estimation results
-#' @details
-#' This function simulates data from a constant transition probability model and then estimates 
-#' the model parameters, providing a way to test the estimation procedure with known parameters.
-#'
-#' @examples
-#' # Test estimation with 10 simulated paths
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' trans_prob_true <- rep(0.2, 6)
-#' results <- example_Const_simulation(10, 1000, mu_true, sigma2_true, trans_prob_true)
-example_Const_simulation <- function(M = 10, N = 1000, 
-                                     mu = c(-2, 1, 2), 
-                                     sigma2 = c(0.02, 0.2, 0.6), 
-                                     trans_prob = rep(0.2, 6),
-                                     B = 100, C = 50, verbose = TRUE) {
-  # Parameters
-  K <- length(mu)    # Number of regimes
-  
-  if (verbose) {
-    cat("Setting up parameters for constant transition probability simulation...\n")
-    cat("Regimes:", K, "\n")
-    cat("Means:", mu, "\n")
-    cat("Variances:", sigma2, "\n")
-  }
-  
-  # Generate simulation data
-  if (verbose) {
-    cat("Generating simulation data for", M, "paths, each with length", N, "...\n")
-    start_time <- Sys.time()
-  }
-  
-  data_Const_sim <- dataConstCD(M, N, mu, sigma2, trans_prob)
-  
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Data generation completed in", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-  }
-  
-  # Storage for estimation results
-  param_estimates <- matrix(0, M, K*(K+1))
-  colnames(param_estimates) <- c(paste0("mu", 1:K), 
-                                 paste0("sigma2", 1:K), 
-                                 paste0("trans", 1:(K*(K-1))))
-  diagnostics <- matrix(0, M, 3)
-  colnames(diagnostics) <- c("loglik", "aic", "bic")
-  
-  # Estimate parameters for each simulation path
-  if (verbose) {
-    cat("Starting parameter estimation for", M, "simulation paths...\n")
-    total_start_time <- Sys.time()
-  }
-  
-  for (i in 1:M) {
-    if (verbose) {
-      path_start_time <- Sys.time()
-      cat("Processing path", i, "of", M, "... ")
-    }
-    
-    # Extract the current simulation path
-    current_data <- data_Const_sim[i,]
-    
-    # Initial parameter guesses for optimization
-    mu_guess <- mu * 0.9 + rnorm(K, 0, 0.1*abs(mu))  # Add noise to true values
-    sigma2_guess <- sigma2 * 0.9 + rnorm(K, 0, 0.1*sigma2)  # Add noise to true values
-    trans_prob_guess <- pmax(pmin(trans_prob + rnorm(K*(K-1), 0, 0.05), 0.95), 0.05)  # Add noise, keep in (0,1)
-    
-    par_guess <- c(mu_guess, sigma2_guess, trans_prob_guess)
-    
-    # Estimate the model
-    Const_est <- try(nlminb(
-      start = transform_Const(par_guess),
-      objective = Rfiltering.single.trasf_Const, 
-      lower = bounds$lower,
-      upper = bounds$upper,
-      y = current_data,
-      B = B, 
-      C = C,
-      control = list(eval.max = 1e6, iter.max = 1e6, trace = 0)
-    ), silent = TRUE)
-    
-    if (!inherits(Const_est, "try-error")) {
-      # Transform parameters back to natural space
-      Const_par_fin <- untransform_Const(Const_est$par)
-      
-      # Store the parameter estimates
-      param_estimates[i,] <- Const_par_fin
-      
-      # Store diagnostics
-      num_params <- length(Const_est$par)
-      diagnostics[i, 1] <- -Const_est$objective
-      diagnostics[i, 2] <- 2 * Const_est$objective + 2 * num_params
-      diagnostics[i, 3] <- 2 * Const_est$objective + num_params * log(N - B - C)
-      
-      if (verbose) {
-        path_end_time <- Sys.time()
-        path_time <- difftime(path_end_time, path_start_time, units = "secs")
-        cat("completed in", round(path_time, 2), "seconds (", 
-            formatC(Const_est$objective, digits = 8, format = "f"), ")\n")
-      }
-    } else {
-      # Handle estimation errors
-      param_estimates[i,] <- NA
-      diagnostics[i,] <- NA
-      
-      if (verbose) {
-        cat("FAILED - Optimization error\n")
-      }
-    }
-    
-    # Estimate remaining time if verbose
-    if (verbose && i > 1) {
-      elapsed <- difftime(Sys.time(), total_start_time, units = "secs")
-      time_per_path <- as.numeric(elapsed) / i
-      remaining_paths <- M - i
-      est_remaining <- time_per_path * remaining_paths
-      
-      cat("Overall progress:", i, "/", M, "paths -", 
-          round(i/M*100), "% complete. Est. remaining time:", 
-          round(est_remaining/60, 1), "minutes\n")
-    }
-  }
-  
-  if (verbose) {
-    total_end_time <- Sys.time()
-    total_time <- difftime(total_end_time, total_start_time, units = "mins")
-    cat("\nParameter estimation completed in", 
-        format(total_time, digits = 4), "\n")
-  }
-  
-  # Calculate summary statistics for parameter estimates
-  estimates_summary <- data.frame(
-    Parameter = colnames(param_estimates),
-    True_Value = c(mu, sigma2, trans_prob),
-    Mean_Estimate = colMeans(param_estimates, na.rm = TRUE),
-    SD_Estimate = apply(param_estimates, 2, sd, na.rm = TRUE),
-    Bias = colMeans(param_estimates, na.rm = TRUE) - c(mu, sigma2, trans_prob),
-    Rel_Bias_Pct = 100 * (colMeans(param_estimates, na.rm = TRUE) - c(mu, sigma2, trans_prob)) / 
-      ifelse(abs(c(mu, sigma2, trans_prob)) > 1e-10, 
-             c(mu, sigma2, trans_prob), 
-             1e-10)
-  )
-  
-  # Compare estimated parameters with true parameters
-  if (verbose) {
-    cat("\nParameter Estimation Summary:\n")
-    print(estimates_summary)
-    
-    cat("\nMean Log-Likelihood:", mean(diagnostics[,1], na.rm = TRUE), "\n")
-    cat("Mean AIC:", mean(diagnostics[,2], na.rm = TRUE), "\n")
-    cat("Mean BIC:", mean(diagnostics[,3], na.rm = TRUE), "\n")
-  }
-  
-  # Prepare return values
-  results <- list(
-    simulation = list(
-      data = data_Const_sim,
-      parameters = list(
-        mu = mu,
-        sigma2 = sigma2,
-        trans_prob = trans_prob
-      )
-    ),
-    estimation = list(
-      parameters = param_estimates,
-      diagnostics = diagnostics,
-      summary = estimates_summary
-    ),
-    settings = list(
-      M = M,
-      N = N,
-      K = K,
-      B = B,
-      C = C
-    )
-  )
   
   return(results)
 }

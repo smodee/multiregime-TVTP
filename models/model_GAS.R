@@ -548,24 +548,24 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
 #'
 #' @examples
 #' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_GAS(c(mu, sigma2, init_trans, A, B))
+#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A, B), "gas")
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_GAS, 
 #'                 y = y, B_burnin = 100, C = 50)
 Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C, 
                                         n_nodes = 30, scaling_method = "moore_penrose") {
   # Transform parameters back to original parameter space
-  par <- untransform_GAS(par_t)
+  par <- untransform_parameters(par_t, "gas")
   
   # Determine the number of regimes
-  K <- count_regime_GAS(par)
+  K <- count_regime(par, "gas")
   n_transition <- K*(K-1)
   
   # Extract the components
-  mu <- par[1:K]
-  sigma2 <- par[(K+1):(2*K)]
-  init_trans <- par[(2*K+1):(2*K+n_transition)]
-  A <- par[(2*K+n_transition+1):(2*K+2*n_transition)]
-  B <- par[(2*K+2*n_transition+1):(2*K+3*n_transition)]
+  mu <- mean_from_par(par, "gas")
+  sigma2 <- sigma2_from_par(par, "gas")
+  init_trans <- transp_from_par(par, "gas")
+  A <- A_from_par(par, "gas")
+  B <- B_from_par(par, "gas")
   
   # Calculate likelihood and return it
   l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C, n_nodes, scaling_method)
@@ -665,7 +665,7 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   }
   
   # Transform parameters to unconstrained space for optimization
-  transformed_params <- transform_GAS(initial_params)
+  transformed_params <- transform_parameters(initial_params, "gas")
   
   # Optimize parameters
   if (verbose) {
@@ -677,18 +677,18 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     start = transformed_params,
     objective = function(par_t, y, B_burnin, C, n_nodes, scaling_method, use_fallback, A_threshold) {
       # Transform parameters back to original parameter space
-      par <- untransform_GAS(par_t)
+      par <- untransform_parameters(par_t, "gas")
       
       # Determine the number of regimes
-      K <- count_regime_GAS(par)
+      K <- count_regime(par, "gas")
       n_transition <- K*(K-1)
       
       # Extract the components
-      mu <- par[1:K]
-      sigma2 <- par[(K+1):(2*K)]
-      init_trans <- par[(2*K+1):(2*K+n_transition)]
-      A <- par[(2*K+n_transition+1):(2*K+2*n_transition)]
-      B <- par[(2*K+2*n_transition+1):(2*K+3*n_transition)]
+      mu <- mean_from_par(par, "gas")
+      sigma2 <- sigma2_from_par(par, "gas")
+      init_trans <- transp_from_par(par, "gas")
+      A <- A_from_par(par, "gas")
+      B <- B_from_par(par, "gas")
       
       # Calculate likelihood and return it
       l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C, 
@@ -716,14 +716,14 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   }
   
   # Transform parameters back to natural space
-  estimated_params <- untransform_GAS(optimization_result$par)
+  estimated_params <- untransform_parameters(optimization_result$par, "gas")
   
   # Extract different parameter components
-  mu_est <- estimated_params[1:K]
-  sigma2_est <- estimated_params[(K+1):(2*K)]
-  init_trans_est <- estimated_params[(2*K+1):(2*K+n_transition)]
-  A_est <- estimated_params[(2*K+n_transition+1):(2*K+2*n_transition)]
-  B_est <- estimated_params[(2*K+2*n_transition+1):(2*K+3*n_transition)]
+  mu_est <- mean_from_par(estimated_params, "gas")
+  sigma2_est <- sigma2_from_par(estimated_params, "gas")
+  init_trans_est <- transp_from_par(estimated_params, "gas")
+  A_est <- A_from_par(estimated_params, "gas")
+  B_est <- B_from_par(estimated_params, "gas")
   
   # Calculate model diagnostics
   num_params <- length(optimization_result$par)
@@ -801,240 +801,6 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
       }
     }
   }
-  
-  return(results)
-}
-
-#' Simulate and estimate a GAS model with specified parameters
-#'
-#' @param M Number of simulation paths
-#' @param N Length of each simulation path
-#' @param mu True regime means
-#' @param sigma2 True regime variances
-#' @param init_trans True initial transition probabilities
-#' @param A True score scaling coefficients
-#' @param B True persistence coefficients
-#' @param B_burnin Burn-in period
-#' @param C Cut-off period
-#' @param n_nodes Number of Gauss-Hermite quadrature nodes
-#' @param scaling_method Score scaling method
-#' @param verbose Whether to print progress information
-#' @return List with simulation results and estimation results
-#' @details
-#' This function simulates data from a GAS model and then estimates 
-#' the model parameters, providing a way to test the estimation procedure
-#' with known parameters.
-#'
-#' @examples
-#' # Test estimation with 10 simulated paths
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' init_trans_true <- rep(0.2, 6)
-#' A_true <- rep(0.1, 6)
-#' B_true <- rep(0.9, 6)
-#' results <- example_GAS_simulation(10, 1000, mu_true, sigma2_true, init_trans_true, A_true, B_true)
-example_GAS_simulation <- function(M = 10, N = 1000, 
-                                   mu = c(-2, 1, 2), 
-                                   sigma2 = c(0.02, 0.2, 0.6), 
-                                   init_trans = rep(0.2, 6), 
-                                   A = rep(0.1, 6),
-                                   B = rep(0.9, 6),
-                                   B_burnin = 100, C = 50, 
-                                   n_nodes = 30, scaling_method = "moore_penrose",
-                                   verbose = TRUE) {
-  # Parameters
-  K <- length(mu)    # Number of regimes
-  n_transition <- K*(K-1)
-  
-  if (verbose) {
-    cat("Setting up parameters for GAS simulation...\n")
-    cat("Regimes:", K, "\n")
-    cat("Means:", mu, "\n")
-    cat("Variances:", sigma2, "\n")
-    cat("Score scaling (A) mean:", mean(A), "\n")
-    cat("Persistence (B) mean:", mean(B), "\n")
-    cat("GAS settings - Nodes:", n_nodes, "Scaling:", scaling_method, "\n")
-  }
-  
-  # Generate simulation data
-  if (verbose) {
-    cat("Generating simulation data for", M, "paths, each with length", N, "...\n")
-    start_time <- Sys.time()
-  }
-  
-  data_GAS_sim <- dataGASCD(M, N, mu, sigma2, init_trans, A, B, 
-                            burn_in = 0, n_nodes = n_nodes, 
-                            scaling_method = scaling_method)
-  
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Data generation completed in", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-  }
-  
-  # Storage for estimation results
-  param_estimates <- matrix(0, M, 2*K + 3*n_transition)
-  colnames(param_estimates) <- c(paste0("mu", 1:K), 
-                                paste0("sigma2", 1:K), 
-                                paste0("trans", 1:n_transition), 
-                                paste0("A", 1:n_transition),
-                                paste0("B", 1:n_transition))
-  diagnostics <- matrix(0, M, 3)
-  colnames(diagnostics) <- c("loglik", "aic", "bic")
-  
-  # Storage for GAS-specific diagnostics
-  gas_diagnostics <- list()
-  
-  # Estimate parameters for each simulation path
-  if (verbose) {
-    cat("Starting parameter estimation for", M, "simulation paths...\n")
-    total_start_time <- Sys.time()
-  }
-  
-  for (i in 1:M) {
-    if (verbose) {
-      path_start_time <- Sys.time()
-      cat("Processing path", i, "of", M, "... ")
-    }
-    
-    # Extract the current simulation path
-    current_data <- data_GAS_sim[i,]
-    
-    # Initial parameter guesses for optimization
-    mu_guess <- mu * 0.9 + rnorm(K, 0, 0.1*abs(mu))  # Add noise to true values
-    sigma2_guess <- sigma2 * 0.9 + rnorm(K, 0, 0.1*sigma2)  # Add noise to true values
-    init_trans_guess <- pmax(pmin(init_trans + rnorm(n_transition, 0, 0.05), 0.95), 0.05)  # Add noise, keep in (0,1)
-    A_guess <- rep(0.1, n_transition)  # Start with moderate values
-    B_guess <- rep(0.8, n_transition)  # Start with high persistence
-    
-    par_guess <- c(mu_guess, sigma2_guess, init_trans_guess, A_guess, B_guess)
-    
-    # Estimate the model
-    GAS_est <- try(nlminb(
-      start = transform_GAS(par_guess),
-      objective = Rfiltering.single.trasf_GAS, 
-      y = current_data,
-      B_burnin = B_burnin, 
-      C = C,
-      n_nodes = n_nodes,
-      scaling_method = scaling_method,
-      control = list(eval.max = 1e6, iter.max = 1e6, trace = 0)
-    ), silent = TRUE)
-    
-    if (!inherits(GAS_est, "try-error")) {
-      # Transform parameters back to natural space
-      GAS_par_fin <- untransform_GAS(GAS_est$par)
-      
-      # Store the parameter estimates
-      param_estimates[i,] <- GAS_par_fin
-      
-      # Store diagnostics
-      num_params <- length(GAS_est$par)
-      diagnostics[i, 1] <- -GAS_est$objective
-      diagnostics[i, 2] <- 2 * GAS_est$objective + 2 * num_params
-      diagnostics[i, 3] <- 2 * GAS_est$objective + num_params * log(N - B_burnin - C)
-      
-      # Store GAS-specific diagnostics (simplified for batch processing)
-      gas_diagnostics[[i]] <- list(
-        converged = GAS_est$convergence == 0,
-        iterations = GAS_est$iterations,
-        scaling_method = scaling_method
-      )
-      
-      if (verbose) {
-        path_end_time <- Sys.time()
-        path_time <- difftime(path_end_time, path_start_time, units = "secs")
-        cat("completed in", round(path_time, 2), "seconds (", 
-            formatC(GAS_est$objective, digits = 8, format = "f"), ")\n")
-      }
-    } else {
-      # Handle estimation errors
-      param_estimates[i,] <- NA
-      diagnostics[i,] <- NA
-      gas_diagnostics[[i]] <- NULL
-      
-      if (verbose) {
-        cat("FAILED - Optimization error\n")
-      }
-    }
-    
-    # Estimate remaining time if verbose
-    if (verbose && i > 1) {
-      elapsed <- difftime(Sys.time(), total_start_time, units = "secs")
-      time_per_path <- as.numeric(elapsed) / i
-      remaining_paths <- M - i
-      est_remaining <- time_per_path * remaining_paths
-      
-      cat("Overall progress:", i, "/", M, "paths -", 
-          round(i/M*100), "% complete. Est. remaining time:", 
-          round(est_remaining/60, 1), "minutes\n")
-    }
-  }
-  
-  if (verbose) {
-    total_end_time <- Sys.time()
-    total_time <- difftime(total_end_time, total_start_time, units = "mins")
-    cat("\nParameter estimation completed in", 
-        format(total_time, digits = 4), "\n")
-  }
-  
-  # Calculate summary statistics for parameter estimates
-  true_params <- c(mu, sigma2, init_trans, A, B)
-  estimates_summary <- data.frame(
-    Parameter = colnames(param_estimates),
-    True_Value = true_params,
-    Mean_Estimate = colMeans(param_estimates, na.rm = TRUE),
-    SD_Estimate = apply(param_estimates, 2, sd, na.rm = TRUE),
-    Bias = colMeans(param_estimates, na.rm = TRUE) - true_params,
-    Rel_Bias_Pct = 100 * (colMeans(param_estimates, na.rm = TRUE) - true_params) / 
-      ifelse(abs(true_params) > 1e-10, true_params, 1e-10)
-  )
-  
-  # Compare estimated parameters with true parameters
-  if (verbose) {
-    cat("\nParameter Estimation Summary:\n")
-    print(estimates_summary)
-    
-    cat("\nMean Log-Likelihood:", mean(diagnostics[,1], na.rm = TRUE), "\n")
-    cat("Mean AIC:", mean(diagnostics[,2], na.rm = TRUE), "\n")
-    cat("Mean BIC:", mean(diagnostics[,3], na.rm = TRUE), "\n")
-    
-    # GAS-specific summary
-    successful_runs <- !is.na(diagnostics[,1])
-    if (sum(successful_runs) > 0) {
-      convergence_rate <- mean(sapply(gas_diagnostics[successful_runs], function(x) x$converged), na.rm = TRUE)
-      cat("Convergence rate:", round(convergence_rate * 100, 1), "%\n")
-    }
-  }
-  
-  # Prepare return values
-  results <- list(
-    simulation = list(
-      data = data_GAS_sim,
-      parameters = list(
-        mu = mu,
-        sigma2 = sigma2,
-        init_trans = init_trans,
-        A = A,
-        B = B
-      )
-    ),
-    estimation = list(
-      parameters = param_estimates,
-      diagnostics = diagnostics,
-      summary = estimates_summary
-    ),
-    gas_diagnostics = gas_diagnostics,
-    settings = list(
-      M = M,
-      N = N,
-      K = K,
-      B_burnin = B_burnin,
-      C = C,
-      n_nodes = n_nodes,
-      scaling_method = scaling_method
-    )
-  )
   
   return(results)
 }
