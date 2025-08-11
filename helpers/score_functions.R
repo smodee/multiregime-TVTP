@@ -1221,8 +1221,6 @@ validate_score_inputs <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   return(TRUE)
 }
 
-
-
 #' Calculate Fisher Information matrix using robust Gauss-Hermite quadrature
 #'
 #' @param mu Vector of regime means (length K)
@@ -1387,8 +1385,6 @@ calculate_fisher_information_robust <- function(mu, sigma2, X_t_prev, p_trans, g
   
   return(fisher_info)
 }
-
-
 
 #' Calculate properly scaled GAS score vector with robust Fisher Information
 #'

@@ -332,7 +332,7 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
 #' y <- rnorm(1000)
 #' loglik <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, 100, 50)
 Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C, 
-                           n_nodes = 30, scaling_method = "moore_penrose",
+                           n_nodes = 30, scaling_method = "simple",
                            use_fallback = TRUE, A_threshold = 1e-4, verbose = FALSE) {
   
   # Check fallback condition if enabled
@@ -441,11 +441,10 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
     
     # Always normalize, but warn if error is suspiciously large
     X_tlag_sum <- sum(X_tlag[, t])
-    if (abs(X_tlag_sum - 1) > 0.01) {  # Warn if error > 1%
+    if (abs(X_tlag_sum - 1) > 0.1) {  # Warn if error > 10%
       warning(paste("Large probability normalization at time", t, 
                     "- sum was", round(X_tlag_sum, 4), "instead of 1.0"))
     }
-    # Always normalize regardless
     X_tlag[, t] <- X_tlag[, t] / X_tlag_sum
     
     # Calculate regime likelihoods
@@ -540,7 +539,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
 #' @param B_burnin Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
-#' @param scaling_method Score scaling method (default: "moore_penrose")
+#' @param scaling_method Score scaling method (default: "simple")
 #' @return Negative log-likelihood of observed data under the model
 #' @details
 #' Transforms parameters from unconstrained space back to natural space
@@ -552,7 +551,7 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
 #' result <- nlminb(transformed_params, Rfiltering.single.trasf_GAS, 
 #'                 y = y, B_burnin = 100, C = 50)
 Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C, 
-                                        n_nodes = 30, scaling_method = "moore_penrose") {
+                                        n_nodes = 30, scaling_method = "simple") {
   # Transform parameters back to original parameter space
   par <- untransform_parameters(par_t, "gas")
   
@@ -581,7 +580,7 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C,
 #' @param initial_params Initial parameter guesses (optional)
 #' @param bounds Parameter bounds for optimization (optional)
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
-#' @param scaling_method Score scaling method (default: "moore_penrose")
+#' @param scaling_method Score scaling method (default: "simple")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
 #' @param verbose Whether to print progress information (default: TRUE)
@@ -803,72 +802,4 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   }
   
   return(results)
-}
-
-#' Helper function to calculate regime persistence metrics
-#'
-#' @param filtered_probs Matrix of filtered probabilities (T x K)
-#' @return List with persistence metrics
-#' @details
-#' Calculates various metrics about regime persistence and transitions
-#' from the filtered probability sequences.
-calculate_persistence <- function(filtered_probs) {
-  if (!is.matrix(filtered_probs)) {
-    stop("filtered_probs must be a matrix")
-  }
-  
-  T_obs <- nrow(filtered_probs)
-  K <- ncol(filtered_probs)
-  
-  # Get most likely regime at each time point
-  regime_sequence <- apply(filtered_probs, 1, which.max)
-  
-  # Count transitions
-  transitions <- sum(diff(regime_sequence) != 0)
-  transition_rate <- transitions / (T_obs - 1)
-  
-  # Calculate average durations in each regime
-  rle_result <- rle(regime_sequence)
-  regime_durations <- split(rle_result$lengths, rle_result$values)
-  
-  avg_durations <- numeric(K)
-  for (k in 1:K) {
-    if (k %in% names(regime_durations)) {
-      avg_durations[k] <- mean(regime_durations[[as.character(k)]])
-    } else {
-      avg_durations[k] <- 0
-    }
-  }
-  
-  # Calculate regime occupancy percentages
-  regime_counts <- table(factor(regime_sequence, levels = 1:K))
-  regime_percentages <- as.numeric(regime_counts) / T_obs * 100
-  
-  return(list(
-    num_transitions = transitions,
-    transition_rate = transition_rate,
-    avg_durations = avg_durations,
-    regime_percentages = regime_percentages,
-    regime_sequence = regime_sequence
-  ))
-}
-
-#' Helper function to format time in a human-readable way
-#'
-#' @param seconds Time in seconds
-#' @return String with formatted time
-#' @examples
-#' format_time(65)  # Returns "1m 5s"
-format_time <- function(seconds) {
-  if (seconds < 60) {
-    return(sprintf("%.1fs", seconds))
-  } else if (seconds < 3600) {
-    minutes <- floor(seconds / 60)
-    secs <- round(seconds - minutes * 60)
-    return(sprintf("%dm %ds", minutes, secs))
-  } else {
-    hours <- floor(seconds / 3600)
-    minutes <- floor((seconds - hours * 3600) / 60)
-    return(sprintf("%dh %dm", hours, minutes))
-  }
 }

@@ -192,10 +192,7 @@ progress_bar <- function(total, title = "Progress", width = 50) {
 #' @param seconds Time in seconds
 #' @return String with formatted time
 #' @examples
-#' start <- Sys.time()
-#' Sys.sleep(65)
-#' end <- Sys.time()
-#' format_time(as.numeric(difftime(end, start, units = "secs")))  # Returns "1m 5s"
+#' format_time(65)  # Returns "1m 5s"
 format_time <- function(seconds) {
   if (seconds < 60) {
     return(sprintf("%.1fs", seconds))
