@@ -206,3 +206,163 @@ format_time <- function(seconds) {
     return(sprintf("%dh %dm", hours, minutes))
   }
 }
+
+#' Generate diverse starting points for regime-switching model estimation
+#'
+#' @param y Observed time series data
+#' @param K Number of regimes
+#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
+#' @param n_starts Number of starting points to generate
+#' @param seed Random seed for reproducibility (optional)
+#' @return List of parameter vectors, each suitable for the specified model type
+#' @details
+#' Generates diverse starting points for maximum likelihood estimation to help
+#' avoid local optima. Uses data-driven heuristics to create reasonable initial
+#' guesses while adding random variation for diversity.
+#' 
+#' Strategy:
+#' - Means: Based on data quantiles with random noise
+#' - Variances: Fractions of data variance with random scaling
+#' - Transition probabilities: Around 1/(K+1) with random variation, constrained to be valid
+#' - A coefficients: Random values in [0, 0.5] for moderate sensitivity
+#' - B coefficients: Random values in [0.5, 0.99] for persistence
+#'
+#' @examples
+#' # Generate 5 starting points for a 3-regime GAS model
+#' y <- rnorm(1000)
+#' starts <- generate_starting_points(y, K=3, model_type="gas", n_starts=5)
+generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "exogenous", "gas"), 
+                                     n_starts, seed = NULL) {
+  # Validate inputs
+  if (!is.numeric(y) || length(y) == 0) {
+    stop("y must be a non-empty numeric vector")
+  }
+  
+  if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
+    stop("K must be an integer >= 2")
+  }
+  
+  if (!is.numeric(n_starts) || n_starts < 1 || n_starts != as.integer(n_starts)) {
+    stop("n_starts must be a positive integer")
+  }
+  
+  model_type <- match.arg(model_type)
+  
+  # Set seed for reproducibility if provided
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+  
+  # Clean data and calculate basic statistics
+  y_clean <- y[!is.na(y) & !is.nan(y) & is.finite(y)]
+  if (length(y_clean) == 0) {
+    stop("No valid data points after removing NA/NaN/Inf values")
+  }
+  
+  y_mean <- mean(y_clean)
+  y_var <- var(y_clean)
+  y_sd <- sqrt(y_var)
+  
+  # Ensure variance is positive
+  if (y_var <= 0) {
+    warning("Data has zero or negative variance. Using unit variance for starting points.")
+    y_var <- 1.0
+    y_sd <- 1.0
+  }
+  
+  # Calculate number of transition probabilities needed
+  n_transition <- K * (K - 1)
+  
+  # Generate starting points
+  starting_points <- vector("list", n_starts)
+  
+  for (i in 1:n_starts) {
+    
+    # 1. Generate means using quantiles with noise
+    # Use quantiles to spread regimes across data range
+    quantile_positions <- seq(0.1, 0.9, length.out = K)
+    base_means <- quantile(y_clean, probs = quantile_positions)
+    
+    # Add random noise (±0.5 standard deviations)
+    noise_scale <- 0.5 * y_sd
+    mu_start <- base_means + runif(K, -noise_scale, noise_scale)
+    
+    # 2. Generate variances as fractions of data variance
+    # Use different fractions for diversity
+    var_fractions <- runif(K, 0.3, 1.5)  # 30% to 150% of data variance
+    sigma2_start <- var_fractions * y_var
+    
+    # 3. Generate transition probabilities
+    # Start with base probability around 1/(K+1), add noise
+    base_prob <- 1.0 / (K + 1)
+    noise_range <- 0.1  # ±10% variation
+    
+    # Generate raw probabilities with noise
+    raw_trans_probs <- pmax(0.01, pmin(0.8, 
+                                       base_prob + runif(n_transition, -noise_range, noise_range)))
+    
+    # Ensure they form a valid stochastic matrix using existing helper
+    trans_prob_start <- convert_to_valid_probs(raw_trans_probs, K)
+    
+    # 4. Build parameter vector based on model type
+    if (model_type == "constant") {
+      # Constant model: [mu, sigma2, trans_prob]
+      param_vector <- c(mu_start, sigma2_start, trans_prob_start)
+      
+    } else if (model_type %in% c("tvp", "exogenous")) {
+      # TVP/Exogenous models: [mu, sigma2, trans_prob, A]
+      A_start <- runif(n_transition, 0, 0.5)  # Moderate sensitivity
+      param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start)
+      
+    } else if (model_type == "gas") {
+      # GAS model: [mu, sigma2, trans_prob, A, B]
+      A_start <- runif(n_transition, 0, 0.5)     # Moderate sensitivity
+      B_start <- runif(n_transition, 0.5, 0.99) # High persistence
+      param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start, B_start)
+    }
+    
+    # Validate the parameter vector
+    tryCatch({
+      validate_parameter_vector(param_vector, model_type, K)
+      starting_points[[i]] <- param_vector
+    }, error = function(e) {
+      # If validation fails, create a safe fallback
+      warning(paste("Starting point", i, "validation failed, using fallback:", e$message))
+      
+      # Create conservative fallback
+      mu_fallback <- seq(y_mean - y_sd, y_mean + y_sd, length.out = K)
+      sigma2_fallback <- rep(y_var, K)
+      trans_prob_fallback <- rep(0.2, n_transition)
+      trans_prob_fallback <- convert_to_valid_probs(trans_prob_fallback, K)
+      
+      if (model_type == "constant") {
+        fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback)
+      } else if (model_type %in% c("tvp", "exogenous")) {
+        A_fallback <- rep(0.1, n_transition)
+        fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback, A_fallback)
+      } else if (model_type == "gas") {
+        A_fallback <- rep(0.1, n_transition)
+        B_fallback <- rep(0.9, n_transition)
+        fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback, A_fallback, B_fallback)
+      }
+      
+      starting_points[[i]] <<- fallback_vector
+    })
+  }
+  
+  # Add metadata
+  attr(starting_points, "generation_info") <- list(
+    K = K,
+    model_type = model_type,
+    n_starts = n_starts,
+    data_characteristics = list(
+      n_obs = length(y_clean),
+      mean = y_mean,
+      variance = y_var,
+      range = range(y_clean)
+    ),
+    generation_seed = seed
+  )
+  
+  return(starting_points)
+}
