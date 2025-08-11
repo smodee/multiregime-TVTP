@@ -263,50 +263,86 @@ Rfiltering.single.trasf_Const <- function(par_t, y, B, C) {
 #' @param K Number of regimes
 #' @param B Burn-in period to exclude from likelihood calculation
 #' @param C Cut-off period to exclude from likelihood calculation
-#' @param initial_params Initial parameter guesses (optional)
+#' @param initial_params Initial parameter guesses (optional, only used when n_starts=1)
 #' @param bounds Parameter bounds for optimization (optional)
+#' @param n_starts Number of starting points for optimization (default: 1)
+#' @param parallel Whether to run multiple starts in parallel (default: FALSE)
+#' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
+#' @param seed Random seed for starting point generation (optional)
 #' @param verbose Whether to print progress information (default: TRUE)
 #' @return List with estimated parameters and model diagnostics
 #' @details
 #' Estimates model parameters using maximum likelihood estimation.
-#' Returns the estimated parameters and various diagnostics including
-#' AIC, BIC, filtered probabilities, and optimization details.
+#' When n_starts > 1, generates multiple diverse starting points and runs
+#' optimization in parallel (if parallel=TRUE) to improve robustness against
+#' local optima. Returns the result with the highest likelihood.
+#' 
+#' Uses the future package for cross-platform parallel processing that works
+#' on Windows, macOS, and Linux. The output format is identical regardless 
+#' of single or multi-start estimation.
 #'
 #' @examples
-#' # Estimate a 3-regime model
-#' data <- rnorm(1000)
+#' # Single start (current behavior)
 #' results <- estimate_const_model(data, K=3)
+#' 
+#' # Multi-start with parallel processing
+#' results <- estimate_const_model(data, K=3, n_starts=10, parallel=TRUE)
+#' 
+#' # Multi-start sequential (for debugging)
+#' results <- estimate_const_model(data, K=3, n_starts=5, parallel=FALSE)
 estimate_const_model <- function(y, K = 3, B = 100, C = 50, 
                                  initial_params = NULL, bounds = NULL,
-                                 verbose = TRUE) {
+                                 n_starts = 1, parallel = FALSE, cores = NULL,
+                                 seed = NULL, verbose = TRUE) {
+  
+  # Set up cores (don't use more cores than starts)
+  if (is.null(cores)) {
+    cores <- max(1, parallel::detectCores() - 1)
+  }
+  cores <- min(cores, n_starts)
+  
   if (verbose) {
     cat("Estimating constant transition probability model with", K, "regimes\n")
+    if (n_starts > 1) {
+      cat("Using", n_starts, "starting points")
+      if (parallel) {
+        cat(" with", cores, "cores in parallel\n")
+      } else {
+        cat(" sequentially\n")
+      }
+    } else {
+      cat("Using single starting point\n")
+    }
     start_time <- Sys.time()
   }
   
-  # Create default initial parameters if none provided
-  if (is.null(initial_params)) {
-    # Create sensible initial guesses based on data characteristics
-    y_mean <- mean(y, na.rm = TRUE)
-    y_sd <- sd(y, na.rm = TRUE)
-    
-    # Create regime means that span the range of the data
-    spread <- 2 * y_sd
-    mu_guess <- seq(y_mean - spread, y_mean + spread, length.out = K)
-    
-    # Create regime variances that increase with regime number
-    sigma2_guess <- seq(y_sd^2 * 0.5, y_sd^2 * 1.5, length.out = K)
-    
-    # Initialize transition probabilities
-    trans_prob_guess <- rep(0.2, K*(K-1))
-    
-    initial_params <- c(mu_guess, sigma2_guess, trans_prob_guess)
-    
+  # Set up parallel processing plan
+  if (parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE)) {
+    future::plan(future::multisession, workers = cores)
+    on.exit(future::plan(future::sequential), add = TRUE)  # Cleanup
     if (verbose) {
-      cat("Generated initial parameter guesses:\n")
-      cat("Means:", round(mu_guess, 4), "\n")
-      cat("Variances:", round(sigma2_guess, 4), "\n")
+      cat("Parallel processing enabled with future package\n")
     }
+  } else {
+    future::plan(future::sequential)
+    if (parallel && n_starts > 1) {
+      warning("future.apply package not available, running sequentially")
+    }
+  }
+  
+  # Generate starting points
+  if (n_starts == 1 && !is.null(initial_params)) {
+    # Use user-provided starting point
+    starting_points <- list(initial_params)
+    if (verbose) {
+      cat("Using provided initial parameters\n")
+    }
+  } else {
+    # Generate diverse starting points
+    if (verbose && n_starts > 1) {
+      cat("Generating", n_starts, "diverse starting points...\n")
+    }
+    starting_points <- generate_starting_points(y, K, "constant", n_starts, seed)
   }
   
   # Create default bounds if none provided
@@ -322,33 +358,96 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
   }
   
-  # Transform parameters to unconstrained space for optimization
-  transformed_params <- transform_parameters(initial_params, "constant")
+  # Define the optimization function for a single start
+  optimize_single_start <- function(start_idx) {
+    start_params <- starting_points[[start_idx]]
+    
+    if (verbose && !parallel) {
+      cat("  Starting point", start_idx, "of", n_starts, "\n")
+    }
+    
+    tryCatch({
+      # Transform parameters to unconstrained space for optimization
+      transformed_params <- transform_parameters(start_params, "constant")
+      
+      # Run optimization
+      trace_setting <- if (verbose > 1) 1 else 0
+      optimization_result <- nlminb(
+        start = transformed_params,
+        objective = Rfiltering.single.trasf_Const,
+        lower = bounds$lower,
+        upper = bounds$upper,
+        y = y,
+        B = B,
+        C = C,
+        control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
+      )
+      
+      # Return result with metadata
+      list(
+        result = optimization_result,
+        start_idx = start_idx,
+        convergence = optimization_result$convergence,
+        objective = optimization_result$objective,
+        start_params = start_params
+      )
+    }, error = function(e) {
+      # Return error information
+      list(
+        result = NULL,
+        start_idx = start_idx,
+        convergence = 999,  # Error code
+        objective = Inf,
+        error = e$message,
+        start_params = start_params
+      )
+    })
+  }
   
-  # Optimize parameters
-  if (verbose) {
-    cat("Starting optimization...\n")
+  # Run optimization(s) using future package
+  if (verbose && n_starts > 1) {
+    cat("Running optimizations...\n")
     opt_start_time <- Sys.time()
   }
   
-  optimization_result <- nlminb(
-    start = transformed_params,
-    objective = Rfiltering.single.trasf_Const,
-    lower = bounds$lower,
-    upper = bounds$upper,
-    y = y,
-    B = B,
-    C = C,
-    control = list(eval.max = 1e6, iter.max = 1e6, trace = ifelse(verbose, 1, 0))
+  results <- future.apply::future_lapply(
+    X = 1:n_starts,
+    FUN = optimize_single_start,
+    future.seed = seed
   )
   
-  if (verbose) {
+  if (verbose && n_starts > 1) {
     opt_end_time <- Sys.time()
-    cat("Optimization completed in", 
+    cat("Optimizations completed in", 
         format(difftime(opt_end_time, opt_start_time), digits = 4), "\n")
-    cat("Optimization convergence code:", optimization_result$convergence, "\n")
-    cat("Final negative log-likelihood:", optimization_result$objective, "\n")
   }
+  
+  # Find the best result
+  valid_results <- results[sapply(results, function(x) !is.null(x$result))]
+  
+  if (length(valid_results) == 0) {
+    stop("All starting points failed to converge")
+  }
+  
+  # Select result with lowest objective value (highest likelihood)
+  objectives <- sapply(valid_results, function(x) x$objective)
+  best_idx <- which.min(objectives)
+  best_result <- valid_results[[best_idx]]
+  
+  # Count convergence issues
+  convergence_codes <- sapply(results, function(x) x$convergence)
+  n_converged <- sum(convergence_codes == 0)
+  n_failed <- sum(convergence_codes == 999)
+  
+  if (verbose && n_starts > 1) {
+    cat("Best result from starting point", best_result$start_idx, "\n")
+    cat("Convergence summary:", n_converged, "converged,", 
+        n_starts - n_converged - n_failed, "non-convergent,", n_failed, "failed\n")
+    cat("Best negative log-likelihood:", best_result$objective, "\n")
+  }
+  
+  # Extract the best optimization result
+  optimization_result <- best_result$result
   
   # Transform parameters back to natural space
   estimated_params <- untransform_parameters(optimization_result$par, "constant")
@@ -373,8 +472,8 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
   filtered_probs <- attr(full_likelihood, "X.t")
   transition_mat <- attr(full_likelihood, "transition_matrix")
   
-  # Prepare results
-  results <- list(
+  # Prepare results (same format as original function)
+  results_list <- list(
     parameters = list(
       mu = mu_est,
       sigma2 = sigma2_est,
@@ -398,6 +497,20 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
     )
   )
   
+  # Add multi-start specific information (only if multiple starts)
+  if (n_starts > 1) {
+    results_list$multistart_info <- list(
+      n_starts = n_starts,
+      parallel_used = parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE),
+      cores_used = cores,
+      best_start_idx = best_result$start_idx,
+      n_converged = n_converged,
+      n_failed = n_failed,
+      all_objectives = sapply(results, function(x) x$objective),
+      convergence_codes = convergence_codes
+    )
+  }
+  
   if (verbose) {
     end_time <- Sys.time()
     cat("Total estimation time:", 
@@ -407,5 +520,5 @@ estimate_const_model <- function(y, K = 3, B = 100, C = 50,
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
   }
   
-  return(results)
+  return(results_list)
 }
