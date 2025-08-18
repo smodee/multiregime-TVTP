@@ -1,12 +1,12 @@
-#' Simulation Scripts for the TVP Model
+#' Simulation Scripts for the Constant Model
 #' 
-#' This file provides simulation scripts and comparison tools for the time-varying
-#' transition probability model with autoregressive dynamics (TVP).
+#' This file provides simulation scripts and comparison tools for the constant 
+#' transition probability regime-switching model.
 
 # Load required model implementations
-source("models/model_TVP.R")
+source("models/model_constant.R")
 
-#' Run a comprehensive simulation study for the TVP model
+#' Run a comprehensive simulation study for the constant model
 #'
 #' @param num_repetitions Number of simulation repetitions
 #' @param sample_sizes Vector of sample sizes to test
@@ -20,7 +20,7 @@ source("models/model_TVP.R")
 #' @param verbose Whether to print progress information (default: TRUE)
 #' @return Data frame with simulation results
 #' @details
-#' Conducts a comprehensive simulation study for the TVP model with different
+#' Conducts a comprehensive simulation study for the constant model with different
 #' sample sizes and measures estimation accuracy and computational performance.
 #' 
 #' Uses coordinated parallelization that intelligently allocates cores between
@@ -31,28 +31,27 @@ source("models/model_TVP.R")
 #' param_settings <- list(
 #'   mu = c(-2, 1, 2),
 #'   sigma2 = c(0.02, 0.2, 0.6),
-#'   init_trans = rep(0.2, 6),
-#'   A = c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)
+#'   trans_prob = c(0.85, 0.1, 0.05, 0.9, 0.05, 0.95)
 #' )
 #' 
 #' # Run simulation study with auto parallelization
-#' results <- run_tvp_simulation_study(
+#' results <- run_const_simulation_study(
 #'   num_repetitions = 100,
 #'   sample_sizes = c(500, 1000),
 #'   K = 3,
 #'   param_settings = param_settings,
 #'   sim_parallel = "auto"
 #' )
-run_tvp_simulation_study <- function(num_repetitions = 100, 
-                                     sample_sizes = c(250, 500, 1000), 
-                                     K = 3,
-                                     param_settings = NULL,
-                                     seed = 123,
-                                     output_dir = NULL,
-                                     n_starts_default = 3,
-                                     sim_parallel = "auto",
-                                     max_cores = NULL,
-                                     verbose = TRUE) {
+run_const_simulation_study <- function(num_repetitions = 100, 
+                                       sample_sizes = c(250, 500, 1000), 
+                                       K = 3,
+                                       param_settings = NULL,
+                                       seed = 123,
+                                       output_dir = NULL,
+                                       n_starts_default = 3,
+                                       sim_parallel = "auto",
+                                       max_cores = NULL,
+                                       verbose = TRUE) {
   
   # Set random seed for reproducibility
   set.seed(seed)
@@ -97,7 +96,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
   }
   
   if (verbose) {
-    cat("=== TVP Simulation Study Configuration ===\n")
+    cat("=== Simulation Study Configuration ===\n")
     cat("Repetitions:", num_repetitions, "\n")
     cat("Sample sizes:", paste(sample_sizes, collapse = ", "), "\n")
     cat("Total cores available:", total_cores, "\n")
@@ -107,16 +106,32 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
       cat("Cores per simulation:", cores_per_sim, "\n")
     }
     cat("Starting points per estimation:", n_starts_per_sim, "\n")
-    cat("=========================================\n\n")
+    cat("======================================\n\n")
   }
   
   # Set up parameter defaults
   if (is.null(param_settings)) {
+    # Create default transition probabilities for K regimes
+    # High diagonal persistence (0.85) with equal off-diagonal probabilities
+    n_transition <- K * (K - 1)
+    trans_prob <- numeric(n_transition)
+    
+    # Fill transition probabilities
+    idx <- 1
+    for (i in 1:K) {
+      off_diag_prob <- 0.15 / (K - 1)  # Equal off-diagonal probabilities
+      for (j in 1:K) {
+        if (i != j) {
+          trans_prob[idx] <- off_diag_prob
+          idx <- idx + 1
+        }
+      }
+    }
+    
     param_settings <- list(
       mu = seq(-3, 3, length.out = K),
       sigma2 = seq(0.1, 1, length.out = K),
-      init_trans = rep(0.2, K*(K-1)),
-      A = rep(0.1, K*(K-1))
+      trans_prob = trans_prob
     )
   }
   
@@ -127,18 +142,14 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
   if (length(param_settings$sigma2) != K) {
     stop("Parameter 'sigma2' must have length K")
   }
-  if (length(param_settings$init_trans) != K*(K-1)) {
-    stop("Parameter 'init_trans' must have length K*(K-1)")
-  }
-  if (length(param_settings$A) != K*(K-1)) {
-    stop("Parameter 'A' must have length K*(K-1)")
+  if (length(param_settings$trans_prob) != K*(K-1)) {
+    stop("Parameter 'trans_prob' must have length K*(K-1)")
   }
   
   # Extract parameters
   mu <- param_settings$mu
   sigma2 <- param_settings$sigma2
-  init_trans <- param_settings$init_trans
-  A <- param_settings$A
+  trans_prob <- param_settings$trans_prob
   
   # Set burn-in and cut-off
   B <- 100
@@ -150,7 +161,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
     start_time <- Sys.time()
     
     # Generate a single path
-    data_sim <- dataTVPCD(1, N + B + C, mu, sigma2, init_trans, A, burn_in = 0)
+    data_sim <- dataConstCD(1, N + B + C, mu, sigma2, trans_prob, burn_in = 0)
     
     # Extract the data
     y <- data_sim[1,]
@@ -162,7 +173,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
     
     # Estimate the model with coordinated parallelization
     tryCatch({
-      estimate <- estimate_tvp_model(
+      estimate <- estimate_const_model(
         y = y,
         K = K,
         B = B,
@@ -181,14 +192,12 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
       # Extract estimated parameters
       mu_est <- estimate$parameters$mu
       sigma2_est <- estimate$parameters$sigma2
-      init_trans_est <- estimate$parameters$init_trans
-      A_est <- estimate$parameters$A
+      trans_prob_est <- estimate$parameters$trans_prob
       
       # Calculate estimation errors
       mu_error <- sqrt(mean((mu_est - mu)^2))
       sigma2_error <- sqrt(mean((sigma2_est - sigma2)^2))
-      init_trans_error <- sqrt(mean((init_trans_est - init_trans)^2))
-      A_error <- sqrt(mean((A_est - A)^2))
+      trans_prob_error <- sqrt(mean((trans_prob_est - trans_prob)^2))
       
       # Create result
       result <- data.frame(
@@ -202,8 +211,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
         BIC = estimate$diagnostics$bic,
         MuError = mu_error,
         Sigma2Error = sigma2_error,
-        InitTransError = init_trans_error,
-        AError = A_error,
+        TransProbError = trans_prob_error,
         NStarts = n_starts_per_sim,
         CoresUsed = cores_per_sim,
         ParallelStrategy = parallel_strategy
@@ -236,7 +244,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
         )
         
         save_file <- file.path(output_dir, 
-                               sprintf("tvp_sim_N%d_rep%d_K%d.rds", N, rep, K))
+                               sprintf("const_sim_N%d_rep%d_K%d.rds", N, rep, K))
         saveRDS(sim_details, save_file)
       }
       
@@ -259,8 +267,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
         BIC = NA,
         MuError = NA,
         Sigma2Error = NA,
-        InitTransError = NA,
-        AError = NA,
+        TransProbError = NA,
         NStarts = n_starts_per_sim,
         CoresUsed = cores_per_sim,
         ParallelStrategy = parallel_strategy,
@@ -329,8 +336,7 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
       cat("Mean parameter errors:\n")
       cat("  Mu:", round(mean(valid_results$MuError, na.rm = TRUE), 4), "\n")
       cat("  Sigma2:", round(mean(valid_results$Sigma2Error, na.rm = TRUE), 4), "\n")
-      cat("  InitTrans:", round(mean(valid_results$InitTransError, na.rm = TRUE), 4), "\n")
-      cat("  A:", round(mean(valid_results$AError, na.rm = TRUE), 4), "\n")
+      cat("  TransProb:", round(mean(valid_results$TransProbError, na.rm = TRUE), 4), "\n")
       cat("Mean LogLik:", round(mean(valid_results$LogLik, na.rm = TRUE), 2), "\n\n")
     }
   }
@@ -350,47 +356,55 @@ run_tvp_simulation_study <- function(num_repetitions = 100,
   return(all_results)
 }
 
-#' Test various autoregressive coefficient specifications for TVP model
+#' Compare different starting point strategies for constant model estimation
 #'
 #' @param y Observed data
-#' @param A_values Vector of A coefficient values to test
 #' @param K Number of regimes (default: 3)
 #' @param B Burn-in period (default: 100)
 #' @param C Cut-off period (default: 50)
-#' @param n_starts Number of starting points for each estimation (default: 3)
+#' @param starting_strategies List of starting point strategies to test (default: common strategies)
 #' @param parallel Whether to use parallel processing for estimation (default: TRUE)
 #' @param cores Number of cores to use (default: NULL, auto-detect)
 #' @param seed Random seed for reproducibility (default: 123)
 #' @param verbose Whether to print progress information (default: TRUE)
-#' @return Data frame comparing model fit for different A values
+#' @return Data frame comparing model fit for different starting strategies
 #' @details
-#' Tests different autoregressive coefficient values for the TVP model and compares
-#' their model fit using AIC, BIC and likelihood. Uses multiple starting points for
-#' robust estimation and can leverage parallel processing.
+#' Tests different starting point strategies for the constant model estimation
+#' and compares their effectiveness using model fit criteria and convergence rates.
+#' This is useful for understanding the robustness of estimation to initialization.
 #'
 #' @examples
 #' # Generate some sample data
 #' y <- rnorm(1000)
 #' 
-#' # Test different A coefficient values
-#' A_values <- c(0, 0.1, 0.2, 0.5)
-#' comparison <- compare_tvp_coefficients(y, A_values, n_starts = 5)
+#' # Compare starting strategies with default options
+#' comparison <- compare_starting_strategies(y, K = 3)
 #' 
-#' # Quick testing mode for development
-#' quick_comparison <- compare_tvp_coefficients(y, A_values, 
-#'                                             n_starts = 1, parallel = FALSE)
-compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5), 
-                                     K = 3, B = 100, C = 50,
-                                     n_starts = 3, parallel = TRUE, cores = NULL,
-                                     seed = 123, verbose = TRUE) {
+#' # Compare with custom strategies
+#' custom_strategies <- list(
+#'   single_start = 1,
+#'   few_starts = 3,
+#'   many_starts = 10,
+#'   extensive_starts = 20
+#' )
+#' result <- compare_starting_strategies(y, starting_strategies = custom_strategies)
+compare_starting_strategies <- function(y, K = 3, B = 100, C = 50,
+                                        starting_strategies = list(
+                                          single_start = 1,
+                                          few_starts = 3,
+                                          moderate_starts = 5,
+                                          many_starts = 10
+                                        ),
+                                        parallel = TRUE, cores = NULL,
+                                        seed = 123, verbose = TRUE) {
   
   # Input validation
   if (!is.numeric(y)) {
     stop("Input 'y' must be a numeric vector")
   }
   
-  if (!is.numeric(A_values) || length(A_values) == 0) {
-    stop("A_values must be a non-empty numeric vector")
+  if (!is.list(starting_strategies) || length(starting_strategies) == 0) {
+    stop("starting_strategies must be a non-empty list")
   }
   
   if (length(y) < (B + C + 100)) {
@@ -401,67 +415,62 @@ compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5),
   if (is.null(cores)) {
     cores <- max(1, parallel::detectCores() - 1)
   }
-  cores <- min(cores, n_starts)
   
   # Determine parallelization strategy
-  num_tests <- length(A_values)
-  if (parallel && num_tests > 1 && cores >= 2) {
-    # Use test-level parallelization if we have multiple tests and cores
-    use_test_parallel <- TRUE
-    cores_per_test <- max(1, cores %/% min(num_tests, cores))
-    n_starts_per_test <- min(n_starts, cores_per_test)
+  num_strategies <- length(starting_strategies)
+  max_starts <- max(unlist(starting_strategies))
+  cores <- min(cores, max_starts)  # Don't use more cores than max starts
+  
+  if (parallel && num_strategies > 1 && cores >= 2) {
+    # Use strategy-level parallelization if we have multiple strategies and cores
+    use_strategy_parallel <- TRUE
+    cores_per_strategy <- max(1, cores %/% min(num_strategies, cores))
     
     if (verbose) {
-      cat("=== TVP Coefficient Comparison ===\n")
-      cat("A values to test:", num_tests, "\n")
-      cat("Parallelization: Test-level with", min(num_tests, cores), "workers\n")
-      cat("Cores per test:", cores_per_test, "\n")
-      cat("Starting points per test:", n_starts_per_test, "\n")
-      cat("=================================\n\n")
+      cat("=== Starting Strategy Comparison ===\n")
+      cat("Strategies to test:", num_strategies, "\n")
+      cat("Parallelization: Strategy-level with", min(num_strategies, cores), "workers\n")
+      cat("Cores per strategy:", cores_per_strategy, "\n")
+      cat("====================================\n\n")
     }
   } else {
-    # Sequential test execution with full estimation parallelization
-    use_test_parallel <- FALSE
-    cores_per_test <- cores
-    n_starts_per_test <- n_starts
+    # Sequential strategy testing with full estimation parallelization
+    use_strategy_parallel <- FALSE
+    cores_per_strategy <- cores
     
     if (verbose) {
-      cat("=== TVP Coefficient Comparison ===\n")
-      cat("A values to test:", num_tests, "\n")
-      cat("Parallelization: Sequential tests, parallel estimation\n")
-      cat("Cores per estimation:", cores_per_test, "\n")
-      cat("Starting points per estimation:", n_starts_per_test, "\n")
-      cat("=================================\n\n")
+      cat("=== Starting Strategy Comparison ===\n")
+      cat("Strategies to test:", num_strategies, "\n")
+      cat("Parallelization: Sequential strategies, parallel estimation\n")
+      cat("Cores per estimation:", cores_per_strategy, "\n")
+      cat("====================================\n\n")
     }
   }
   
-  # Function to test a single A value
-  test_single_A_value <- function(A_info) {
-    A_val <- A_info$value
-    A_idx <- A_info$index
+  # Function to test a single starting strategy
+  test_single_strategy <- function(strategy_info) {
+    name <- strategy_info$name
+    n_starts <- strategy_info$n_starts
     
-    if (verbose && !use_test_parallel) {
-      cat("Testing A coefficient:", A_val, "...")
+    if (verbose && !use_strategy_parallel) {
+      cat("Testing starting strategy:", name, "(", n_starts, "starts)...")
     }
     
     start_time <- Sys.time()
     
-    # Create A parameter vector (same value for all transitions)
-    A_vec <- rep(A_val, K*(K-1))
-    
     # Estimate the model
     tryCatch({
-      estimate <- estimate_tvp_model(
+      estimate <- estimate_const_model(
         y = y,
         K = K,
         B = B,
         C = C,
-        initial_params = list(A = A_vec),  # Use the specific A value as starting point
+        initial_params = NULL,
         bounds = NULL,
-        n_starts = n_starts_per_test,
-        parallel = (cores_per_test > 1),
-        cores = cores_per_test,
-        seed = seed + A_idx,  # Unique seed per test
+        n_starts = n_starts,
+        parallel = (cores_per_strategy > 1 && n_starts > 1),
+        cores = min(cores_per_strategy, n_starts),
+        seed = seed + which(names(starting_strategies) == name),  # Unique seed per strategy
         verbose = FALSE
       )
       
@@ -470,32 +479,33 @@ compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5),
       # Extract convergence information if available
       n_converged <- NA
       n_failed <- NA
-      if (n_starts_per_test > 1 && !is.null(estimate$multistart_info)) {
+      if (n_starts > 1 && !is.null(estimate$multistart_info)) {
         n_converged <- estimate$multistart_info$n_converged
         n_failed <- estimate$multistart_info$n_failed
       }
       
       # Store results
       result <- data.frame(
-        A_Value = A_val,
+        Strategy = name,
+        NStarts = n_starts,
         LogLik = estimate$diagnostics$loglik,
         AIC = estimate$diagnostics$aic,
         BIC = estimate$diagnostics$bic,
         NumParams = estimate$diagnostics$num_params,
         EstimationTime = estimation_time,
-        NStarts = n_starts_per_test,
         NConverged = n_converged,
         NFailed = n_failed,
+        TimePerStart = estimation_time / n_starts,
         stringsAsFactors = FALSE
       )
       
-      if (verbose && !use_test_parallel) {
+      if (verbose && !use_strategy_parallel) {
         cat(" completed\n")
         cat("  LogLik:", round(estimate$diagnostics$loglik, 2), 
             ", AIC:", round(estimate$diagnostics$aic, 2), 
-            ", BIC:", round(estimate$diagnostics$bic, 2), "\n")
-        if (n_starts_per_test > 1 && !is.na(n_converged)) {
-          cat("  Convergence:", n_converged, "of", n_starts_per_test, "starts succeeded\n")
+            ", Time:", round(estimation_time, 2), "s\n")
+        if (n_starts > 1 && !is.na(n_converged)) {
+          cat("  Convergence:", n_converged, "of", n_starts, "starts succeeded\n")
         }
         cat("\n")
       }
@@ -506,57 +516,58 @@ compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5),
       estimation_time <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
       
       if (verbose) {
-        if (!use_test_parallel) cat(" failed\n")
+        if (!use_strategy_parallel) cat(" failed\n")
         cat("  Error in estimation:", e$message, "\n\n")
       }
       
       # Store error result
       data.frame(
-        A_Value = A_val,
+        Strategy = name,
+        NStarts = n_starts,
         LogLik = NA,
         AIC = NA,
         BIC = NA,
         NumParams = NA,
         EstimationTime = estimation_time,
-        NStarts = n_starts_per_test,
         NConverged = NA,
         NFailed = NA,
+        TimePerStart = NA,
         ErrorMessage = e$message,
         stringsAsFactors = FALSE
       )
     })
   }
   
-  # Prepare test information
-  test_list <- lapply(seq_along(A_values), function(i) {
-    list(value = A_values[i], index = i)
+  # Prepare strategy information for testing
+  strategy_list <- lapply(names(starting_strategies), function(name) {
+    list(name = name, n_starts = starting_strategies[[name]])
   })
   
   # Run the comparison (either in parallel or sequential)
-  if (use_test_parallel && requireNamespace("future.apply", quietly = TRUE)) {
-    # Set up parallel processing for tests
+  if (use_strategy_parallel && requireNamespace("future.apply", quietly = TRUE)) {
+    # Set up parallel processing for strategies
     original_plan <- future::plan()
-    future::plan(future::multisession, workers = min(num_tests, cores))
+    future::plan(future::multisession, workers = min(num_strategies, cores))
     on.exit(future::plan(original_plan), add = TRUE)
     
     if (verbose) {
-      cat("Running", num_tests, "A value tests in parallel...\n\n")
+      cat("Running", num_strategies, "strategies in parallel...\n\n")
     }
     
-    # Test A values in parallel
-    results_list <- future.apply::future_lapply(test_list, test_single_A_value,
+    # Test strategies in parallel
+    results_list <- future.apply::future_lapply(strategy_list, test_single_strategy,
                                                 future.seed = TRUE)
     
     # Combine results
     results <- do.call(rbind, results_list)
     
   } else {
-    # Test A values sequentially
+    # Test strategies sequentially
     results <- data.frame()
     
-    for (test_info in test_list) {
-      test_result <- test_single_A_value(test_info)
-      results <- rbind(results, test_result)
+    for (strategy_info in strategy_list) {
+      strategy_result <- test_single_strategy(strategy_info)
+      results <- rbind(results, strategy_result)
     }
   }
   
@@ -568,18 +579,30 @@ compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5),
   
   # Summary output
   if (verbose) {
-    cat("=== Comparison Results ===\n")
+    cat("=== Strategy Comparison Results ===\n")
     successful_fits <- sum(!is.na(results$AIC))
     cat("Successful estimations:", successful_fits, "of", nrow(results), "\n")
     
     if (successful_fits > 0) {
-      best_A <- results$A_Value[1]
+      best_strategy <- results$Strategy[1]
       best_aic <- results$AIC[1]
-      cat("Best A coefficient:", best_A, "(AIC =", round(best_aic, 2), ")\n")
+      best_time <- results$EstimationTime[1]
+      cat("Best strategy:", best_strategy, "(AIC =", round(best_aic, 2), 
+          ", Time =", round(best_time, 2), "s)\n")
       
       if (successful_fits > 1) {
         aic_diff <- results$AIC[2] - results$AIC[1]
         cat("AIC improvement over second best:", round(aic_diff, 2), "\n")
+      }
+      
+      # Show efficiency analysis
+      if (nrow(valid_results) > 1) {
+        cat("\nEfficiency analysis:\n")
+        for (i in 1:nrow(valid_results)) {
+          row <- valid_results[i, ]
+          efficiency_score <- (best_aic - row$AIC) / row$EstimationTime
+          cat("  ", row$Strategy, ": Efficiency score =", round(efficiency_score, 4), "\n")
+        }
       }
       
       # Show timing summary
@@ -588,86 +611,121 @@ compare_tvp_coefficients <- function(y, A_values = c(0, 0.1, 0.2, 0.5),
     }
     
     # Show failed estimations if any
-    failed_tests <- results$A_Value[is.na(results$AIC)]
-    if (length(failed_tests) > 0) {
-      cat("Failed A values:", paste(failed_tests, collapse = ", "), "\n")
+    failed_strategies <- results$Strategy[is.na(results$AIC)]
+    if (length(failed_strategies) > 0) {
+      cat("Failed strategies:", paste(failed_strategies, collapse = ", "), "\n")
     }
     
-    cat("=========================\n\n")
+    cat("===================================\n\n")
   }
   
   return(results)
 }
 
-#' Generate test datasets with known TVP characteristics
+#' Generate synthetic datasets with known constant transition probabilities
 #'
-#' @param N Length of the time series
-#' @param K Number of regimes
-#' @param A_strength Strength of autoregressive effects (default: 0.2)
-#' @param seed Random seed for reproducibility
-#' @return List of different TVP time series
+#' @param N Length of each dataset
+#' @param num_datasets Number of datasets to generate
+#' @param K Number of regimes (default: 3)
+#' @param regime_types List of regime characteristic types (default: common types)
+#' @param seed Random seed for reproducibility (default: 123)
+#' @return List of datasets with different regime characteristics
 #' @details
-#' Generates a variety of time series with different TVP characteristics
-#' that can be used for model testing and validation.
+#' Generates multiple datasets with different regime characteristics to test
+#' the constant model's performance across various scenarios. Each dataset
+#' has known parameters for validation purposes.
 #'
 #' @examples
-#' # Generate TVP datasets of length 1000
-#' datasets <- generate_tvp_test_datasets(1000)
+#' # Generate datasets of length 1000
+#' datasets <- generate_const_test_datasets(1000, 5)
 #' 
-#' # Plot the first few datasets
-#' par(mfrow=c(2,2))
-#' for(i in 1:4) {
-#'   name <- names(datasets)[i]
-#'   plot(datasets[[name]], type="l", main=name)
-#' }
-generate_tvp_test_datasets <- function(N = 1000, K = 3, A_strength = 0.2, seed = 123) {
+#' # Generate datasets with custom regime types
+#' custom_types <- list(
+#'   similar_regimes = list(mu_spread = 0.5, sigma_spread = 0.1),
+#'   distinct_regimes = list(mu_spread = 3.0, sigma_spread = 1.0)
+#' )
+#' datasets <- generate_const_test_datasets(1000, 2, regime_types = custom_types)
+generate_const_test_datasets <- function(N, num_datasets = 5, K = 3,
+                                         regime_types = list(
+                                           balanced_persistent = list(
+                                             mu_spread = 2, sigma_spread = 0.5, persistence = 0.9
+                                           ),
+                                           balanced_switching = list(
+                                             mu_spread = 2, sigma_spread = 0.5, persistence = 0.7
+                                           ),
+                                           distinct_persistent = list(
+                                             mu_spread = 4, sigma_spread = 1.0, persistence = 0.9
+                                           ),
+                                           similar_switching = list(
+                                             mu_spread = 1, sigma_spread = 0.2, persistence = 0.6
+                                           ),
+                                           heteroskedastic = list(
+                                             mu_spread = 2, sigma_spread = 2.0, persistence = 0.8
+                                           )
+                                         ),
+                                         seed = 123) {
   # Set seed for reproducibility
   set.seed(seed)
   
-  # Initialize list to store datasets
+  # Initialize results list
   datasets <- list()
   
-  # Common parameters
-  mu <- seq(-2, 2, length.out = K)
-  sigma2 <- rep(0.5, K)
-  init_trans <- rep(0.2, K*(K-1))
-  
-  # 1. Weak autoregressive effects
-  A_weak <- rep(0.05, K*(K-1))
-  datasets$weak_AR <- dataTVPCD(1, N, mu, sigma2, init_trans, A_weak)[1,]
-  
-  # 2. Medium autoregressive effects  
-  A_medium <- rep(A_strength, K*(K-1))
-  datasets$medium_AR <- dataTVPCD(1, N, mu, sigma2, init_trans, A_medium)[1,]
-  
-  # 3. Strong autoregressive effects
-  A_strong <- rep(0.5, K*(K-1))
-  datasets$strong_AR <- dataTVPCD(1, N, mu, sigma2, init_trans, A_strong)[1,]
-  
-  # 4. Asymmetric effects (different A for different transitions)
-  A_asymmetric <- c(0.1, -0.1, 0.3, -0.2, 0.2, -0.3)[1:(K*(K-1))]
-  datasets$asymmetric_AR <- dataTVPCD(1, N, mu, sigma2, init_trans, A_asymmetric)[1,]
-  
-  # 5. High persistence regimes
-  mu_persistent <- c(-3, 0, 3)
-  sigma2_persistent <- c(0.1, 0.1, 0.1)
-  init_trans_persistent <- rep(0.05, K*(K-1))  # Low transition probabilities
-  A_persistent <- rep(0.1, K*(K-1))
-  datasets$high_persistence <- dataTVPCD(1, N, mu_persistent, sigma2_persistent, 
-                                         init_trans_persistent, A_persistent)[1,]
-  
-  # 6. High switching frequency
-  init_trans_frequent <- rep(0.4, K*(K-1))  # High transition probabilities
-  A_frequent <- rep(0.2, K*(K-1))
-  datasets$frequent_switching <- dataTVPCD(1, N, mu, sigma2, 
-                                           init_trans_frequent, A_frequent)[1,]
-  
-  # 7. Heteroskedastic regimes
-  mu_hetero <- c(-1, 0, 1)
-  sigma2_hetero <- c(0.1, 0.5, 1.5)  # Different volatilities
-  A_hetero <- rep(0.15, K*(K-1))
-  datasets$heteroskedastic <- dataTVPCD(1, N, mu_hetero, sigma2_hetero, 
-                                        init_trans, A_hetero)[1,]
+  # Generate datasets for each regime type
+  for (type_name in names(regime_types)) {
+    type_params <- regime_types[[type_name]]
+    
+    # Extract parameters with defaults
+    mu_spread <- ifelse(is.null(type_params$mu_spread), 2, type_params$mu_spread)
+    sigma_spread <- ifelse(is.null(type_params$sigma_spread), 0.5, type_params$sigma_spread)
+    persistence <- ifelse(is.null(type_params$persistence), 0.8, type_params$persistence)
+    
+    # Generate multiple datasets of this type
+    for (dataset_idx in 1:num_datasets) {
+      # Create regime parameters
+      mu <- seq(-mu_spread/2, mu_spread/2, length.out = K)
+      sigma2 <- seq(0.1, 0.1 + sigma_spread, length.out = K)
+      
+      # Create transition probability matrix with specified persistence
+      n_transition <- K * (K - 1)
+      trans_prob <- numeric(n_transition)
+      
+      # Fill transition probabilities
+      idx <- 1
+      for (i in 1:K) {
+        off_diag_prob <- (1 - persistence) / (K - 1)  # Equal off-diagonal probabilities
+        for (j in 1:K) {
+          if (i != j) {
+            trans_prob[idx] <- off_diag_prob
+            idx <- idx + 1
+          }
+        }
+      }
+      
+      # Generate data
+      data_sim <- dataConstCD(1, N, mu, sigma2, trans_prob, burn_in = 100)
+      y <- data_sim[1,]
+      
+      # Store dataset with metadata
+      dataset_name <- paste0(type_name, "_", dataset_idx)
+      datasets[[dataset_name]] <- list(
+        data = y,
+        true_parameters = list(
+          mu = mu,
+          sigma2 = sigma2,
+          trans_prob = trans_prob
+        ),
+        regime_type = type_name,
+        dataset_index = dataset_idx,
+        characteristics = list(
+          mu_spread = mu_spread,
+          sigma_spread = sigma_spread,
+          persistence = persistence,
+          K = K,
+          N = N
+        )
+      )
+    }
+  }
   
   return(datasets)
 }
