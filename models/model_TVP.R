@@ -302,12 +302,13 @@ Rfiltering.single.trasf_TVP <- function(par_t, y, B, C) {
 #' @param B Burn-in period to exclude from likelihood calculation
 #' @param C Cut-off period to exclude from likelihood calculation
 #' @param initial_params Initial parameter guesses (optional, only used when n_starts=1)
-#' @param bounds Parameter bounds for optimization (optional)
+#' @param bounds Parameter bounds for optimization in full parameter format (optional)
 #' @param n_starts Number of starting points for optimization (default: 1)
 #' @param parallel Whether to run multiple starts in parallel (default: FALSE)
 #' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
 #' @param seed Random seed for starting point generation (optional)
 #' @param verbose Whether to print progress information (default: TRUE)
+#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
 #' @return List with estimated parameters and model diagnostics
 #' @details
 #' Estimates model parameters using maximum likelihood estimation.
@@ -318,6 +319,11 @@ Rfiltering.single.trasf_TVP <- function(par_t, y, B, C) {
 #' Uses the future package for cross-platform parallel processing that works
 #' on Windows, macOS, and Linux. The output format is identical regardless 
 #' of single or multi-start estimation.
+#' 
+#' When equal_variances=TRUE, all regime variances are constrained to be equal
+#' by compressing the variance parameters during optimization and expanding them
+#' back afterward. Parameters and bounds should always be provided in full format
+#' (with separate variance for each regime); compression is handled internally.
 #'
 #' @examples
 #' # Single start (current behavior)
@@ -328,10 +334,13 @@ Rfiltering.single.trasf_TVP <- function(par_t, y, B, C) {
 #' 
 #' # Multi-start sequential (for debugging)
 #' results <- estimate_tvp_model(data, K=3, n_starts=5, parallel=FALSE)
+#' 
+#' # Constrain variances to be equal (useful for comparing with benchmarks)
+#' results <- estimate_tvp_model(data, K=3, equal_variances=TRUE)
 estimate_tvp_model <- function(y, K = 3, B = 100, C = 50, 
                                initial_params = NULL, bounds = NULL,
                                n_starts = 1, parallel = FALSE, cores = NULL,
-                               seed = NULL, verbose = TRUE) {
+                               seed = NULL, verbose = TRUE, equal_variances = FALSE) {
   
   # Set up cores (don't use more cores than starts)
   if (is.null(cores)) {
@@ -340,7 +349,11 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   cores <- min(cores, n_starts)
   
   if (verbose) {
-    cat("Estimating TVP model with", K, "regimes\n")
+    cat("Estimating TVP model with", K, "regimes")
+    if (equal_variances) {
+      cat(" (equal variances)")
+    }
+    cat("\n")
     if (n_starts > 1) {
       cat("Using", n_starts, "starting points")
       if (parallel) {
@@ -386,6 +399,7 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   # Create default bounds if none provided
   if (is.null(bounds)) {
     n_transition <- K * (K - 1)
+    
     lower_bounds <- c(rep(-Inf, K),               # No bounds on means
                       rep(-Inf, K),               # Variance >= 0 (log-transformed)
                       rep(-Inf, n_transition),    # Probabilities >= 0 (logit-transformed)
@@ -399,6 +413,12 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
   }
   
+  # Compress bounds if using equal variances (applies to both user-provided and default bounds)
+  if (equal_variances) {
+    bounds$lower <- compress_variances(bounds$lower, K)
+    bounds$upper <- compress_variances(bounds$upper, K)
+  }
+  
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
@@ -408,10 +428,15 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
     }
     
     tryCatch({
-      # Transform parameters to unconstrained space for optimization
+      # 1. Transform parameters to unconstrained space for optimization
       transformed_params <- transform_parameters(start_params, "tvp")
       
-      # Run optimization
+      # 2. Compress parameters (conditional)
+      if (equal_variances) {
+        transformed_params <- compress_variances(transformed_params, K)
+      }
+      
+      # 3. Run optimization (same way regardless of equal_variances)
       trace_setting <- if (verbose > 1) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
@@ -423,6 +448,18 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
         C = C,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
+      
+      # 4. Decompress parameters (conditional)
+      result_params <- optimization_result$par
+      if (equal_variances) {
+        result_params <- expand_variances(result_params, K)
+      }
+      
+      # 5. Untransform parameters (always happens)
+      estimated_params <- untransform_parameters(result_params, "tvp")
+      
+      # Store the final parameters in the optimization result for consistency
+      optimization_result$final_par <- estimated_params
       
       # Return result with metadata
       list(
@@ -490,8 +527,8 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   # Extract the best optimization result
   optimization_result <- best_result$result
   
-  # Transform parameters back to natural space
-  estimated_params <- untransform_parameters(optimization_result$par, "tvp")
+  # Get final parameters (already processed through our pipeline above)
+  estimated_params <- optimization_result$final_par
   
   # Extract different parameter components
   mu_est <- mean_from_par(estimated_params, "tvp")
@@ -500,11 +537,12 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   A_est <- A_from_par(estimated_params, "tvp")
   
   # Calculate model diagnostics
-  num_params <- length(optimization_result$par)
+  # Note: use the original parameter count for AIC/BIC calculation
+  num_params_original <- length(estimated_params)  # Full parameter vector
   num_data_points <- length(y) - B - C
   
-  aic <- 2 * optimization_result$objective + 2 * num_params
-  bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
+  aic <- 2 * optimization_result$objective + 2 * num_params_original
+  bic <- 2 * optimization_result$objective + num_params_original * log(num_data_points)
   
   # Calculate filtered probabilities
   full_likelihood <- Rfiltering_TVP(
@@ -526,7 +564,7 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
       loglik = -optimization_result$objective,
       aic = aic,
       bic = bic,
-      num_params = num_params,
+      num_params = num_params_original,
       num_data_points = num_data_points
     ),
     optimization = optimization_result,
@@ -536,7 +574,8 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
       type = "TVP",
       K = K,
       B = B,
-      C = C
+      C = C,
+      equal_variances = equal_variances
     )
   )
   
@@ -561,6 +600,9 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
     cat("AIC:", aic, "BIC:", bic, "\n")
     cat("Estimated means:", round(mu_est, 4), "\n")
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
+    if (equal_variances) {
+      cat("Note: All variances constrained to be equal\n")
+    }
   }
   
   return(results_list)

@@ -583,6 +583,7 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C,
 #' @param scaling_method Score scaling method (default: "simple")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
+#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
 #' @param n_starts Number of starting points for optimization (default: 1)
 #' @param parallel Whether to run multiple starts in parallel (default: FALSE)
 #' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
@@ -598,6 +599,11 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C,
 #' When use_fallback=TRUE, automatically falls back to constant transition 
 #' probability model when A parameters are effectively zero, providing both 
 #' speed improvements and numerical stability.
+#' 
+#' When equal_variances=TRUE, constrains all regime variances to be equal,
+#' reducing the number of parameters by K-1. This can improve numerical
+#' stability and may be preferred when regime differences are primarily
+#' in means rather than variances.
 #' 
 #' Uses the future package for cross-platform parallel processing that works
 #' on Windows, macOS, and Linux. The output format is identical regardless 
@@ -615,10 +621,17 @@ Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C,
 #' 
 #' # Multi-start without fallback
 #' results <- estimate_gas_model(data, K=3, n_starts=10, parallel=TRUE, use_fallback=FALSE)
+#' 
+#' # With equal variances constraint
+#' results <- estimate_gas_model(data, K=3, equal_variances=TRUE)
+#' 
+#' # Combined: equal variances with multi-start
+#' results <- estimate_gas_model(data, K=3, equal_variances=TRUE, n_starts=5, parallel=TRUE)
 estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50, 
                                initial_params = NULL, bounds = NULL,
                                n_nodes = 30, scaling_method = "simple",
                                use_fallback = TRUE, A_threshold = 1e-4,
+                               equal_variances = FALSE,
                                n_starts = 1, parallel = FALSE, cores = NULL,
                                seed = NULL, verbose = TRUE) {
   
@@ -695,6 +708,13 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
   }
   
+  # Compress bounds for equal variances constraint
+  if (equal_variances) {
+    # Use compress_variances helper function on the bounds vectors (no model_type needed)
+    bounds$lower <- compress_variances(bounds$lower, K)
+    bounds$upper <- compress_variances(bounds$upper, K)
+  }
+  
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
@@ -704,10 +724,15 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     }
     
     tryCatch({
-      # Transform parameters to unconstrained space for optimization
+      # 1. Transform parameters to unconstrained space
       transformed_params <- transform_parameters(start_params, "gas")
       
-      # Run optimization using the wrapper function that handles GAS-specific parameters
+      # 2. Compress parameters if using equal variances
+      if (equal_variances) {
+        transformed_params <- compress_variances(transformed_params, K)
+      }
+      
+      # 3. Run optimization
       trace_setting <- if (verbose > 1) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
@@ -738,6 +763,18 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
         A_threshold = A_threshold,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
+      
+      # 4. Expand parameters if using equal variances
+      result_params <- optimization_result$par
+      if (equal_variances) {
+        result_params <- expand_variances(result_params, K)
+      }
+      
+      # 5. Untransform parameters
+      estimated_params <- untransform_parameters(result_params, "gas")
+      
+      # Store the final parameters in the optimization result for consistency
+      optimization_result$final_par <- estimated_params
       
       # Return result with metadata
       list(
@@ -805,8 +842,8 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   # Extract the best optimization result
   optimization_result <- best_result$result
   
-  # Transform parameters back to natural space
-  estimated_params <- untransform_parameters(optimization_result$par, "gas")
+  # Get final parameters (already processed through our pipeline above)
+  estimated_params <- optimization_result$final_par
   
   # Extract different parameter components
   mu_est <- mean_from_par(estimated_params, "gas")
@@ -816,11 +853,12 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   B_est <- B_from_par(estimated_params, "gas")
   
   # Calculate model diagnostics
-  num_params <- length(optimization_result$par)
+  # Note: use the original parameter count for AIC/BIC calculation
+  num_params_original <- length(estimated_params)  # Full parameter vector
   num_data_points <- length(y) - B_burnin - C
   
-  aic <- 2 * optimization_result$objective + 2 * num_params
-  bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
+  aic <- 2 * optimization_result$objective + 2 * num_params_original
+  bic <- 2 * optimization_result$objective + num_params_original * log(num_data_points)
   
   # Calculate filtered probabilities and other model outputs
   full_likelihood <- Rfiltering_GAS(
@@ -847,7 +885,7 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
       loglik = -optimization_result$objective,
       aic = aic,
       bic = bic,
-      num_params = num_params,
+      num_params = num_params_original,
       num_data_points = num_data_points
     ),
     optimization = optimization_result,
@@ -864,7 +902,8 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
       n_nodes = n_nodes,
       scaling_method = scaling_method,
       use_fallback = use_fallback,
-      A_threshold = A_threshold
+      A_threshold = A_threshold,
+      equal_variances = equal_variances
     )
   )
   
@@ -891,6 +930,12 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     cat("AIC:", aic, "BIC:", bic, "\n")
     cat("Estimated means:", round(mu_est, 4), "\n")
     cat("Estimated variances:", round(sigma2_est, 4), "\n")
+    
+    # Report variance constraint status
+    if (equal_variances) {
+      cat("Note: All variances constrained to be equal\n")
+    }
+    
     cat("Estimated A coefficients (mean):", round(mean(A_est), 6), "\n")
     cat("Estimated B coefficients (mean):", round(mean(B_est), 4), "\n")
     

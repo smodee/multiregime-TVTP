@@ -15,7 +15,8 @@ source("helpers/parallel_utils.R")
 #' @param param_settings List with parameter settings
 #' @param seed Random seed for reproducibility
 #' @param output_dir Directory to save detailed results (NULL for no saving)
-#' @param n_starts_default Default number of starting points for estimation (default: 3)
+#' @param n_starts_default Default number of starting points for estimation (default: 5)
+#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
 #' @param sim_parallel Simulation-level parallelization: "auto", TRUE, FALSE (default: "auto")
 #' @param max_cores Maximum cores to use (default: NULL, uses conservative detection)
 #' @param reserve_cores Number of cores to reserve for system (default: 2)
@@ -53,7 +54,8 @@ run_gas_simulation_study <- function(num_repetitions = 100,
                                      param_settings = NULL,
                                      seed = 123,
                                      output_dir = NULL,
-                                     n_starts_default = 3,
+                                     n_starts_default = 5,
+                                     equal_variances = FALSE,
                                      sim_parallel = "auto",
                                      max_cores = NULL,
                                      reserve_cores = 2,
@@ -171,6 +173,7 @@ run_gas_simulation_study <- function(num_repetitions = 100,
         initial_params = NULL,
         bounds = NULL,
         n_starts = n_starts_default,
+        equal_variances = equal_variances,
         parallel = use_estimation_parallel,
         cores = allocation$cores_per_sim,
         seed = seed + rep,  # Ensure reproducible but different seeds
@@ -232,6 +235,7 @@ run_gas_simulation_study <- function(num_repetitions = 100,
         TransitionRate = transition_rate,
         AvgDuration = avg_duration,
         NStarts = n_starts_default,
+        equal_variances = equal_variances,
         CoresPerSim = allocation$cores_per_sim,
         ParallelStrategy = describe_parallel_strategy(allocation),
         FallbackUsed = fallback_used
@@ -266,6 +270,7 @@ run_gas_simulation_study <- function(num_repetitions = 100,
         TransitionRate = NA,
         AvgDuration = NA,
         NStarts = n_starts_default,
+        equal_variances = equal_variances,
         CoresPerSim = allocation$cores_per_sim,
         ParallelStrategy = describe_parallel_strategy(allocation),
         FallbackUsed = NA
