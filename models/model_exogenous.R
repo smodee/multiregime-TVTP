@@ -257,37 +257,6 @@ Rfiltering_TVPXExo <- function(mu, sigma2, init_trans, A, X_Exo, y, B, C) {
   return(res)
 }
 
-#' Wrapper for the likelihood calculator to be used for max-likelihood estimation
-#'
-#' @param par_t Transformed parameters in unconstrained space
-#' @param X_Exo Exogenous process that drives transition probability changes
-#' @param y Observed time series increments
-#' @param B Burn-in to be excluded at the beginning of the time series
-#' @param C Cut-off to be excluded at the end of the time series
-#' @return Negative log-likelihood of observed data under the model
-#' @details
-#' Transforms parameters from unconstrained space back to natural space
-#' and calls the filtering function to calculate the likelihood.
-#'
-#' @examples
-#' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A), "exogenous")
-#' result <- nlminb(transformed_params, Rfiltering.single.trasf_TVPXExo, 
-#'                 X_Exo = X_Exo, y = y, B = 100, C = 50)
-Rfiltering.single.trasf_TVPXExo <- function(par_t, X_Exo, y, B, C) {
-  # Transform parameters back to original parameter space
-  par <- untransform_parameters(par_t, "exogenous")
-  
-  mu <- mean_from_par(par, "exogenous")
-  sigma2 <- sigma2_from_par(par, "exogenous")
-  init_trans <- transp_from_par(par, "exogenous")
-  A <- A_from_par(par, "exogenous")
-  
-  # Calculate likelihood and return it
-  l <- Rfiltering_TVPXExo(mu, sigma2, init_trans, A, X_Exo, y, B, C)
-  return(l[1])
-}
-
 #' Estimate parameters for the exogenous variable-driven regime-switching model
 #'
 #' @param y Observed time series
@@ -435,7 +404,25 @@ estimate_exogenous_model <- function(y, X_Exo, K = 3, B = 100, C = 50,
       trace_setting <- if (verbose > 1) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = Rfiltering.single.trasf_TVPXExo,
+        objective = function(par_t, X_Exo, y, B, C) {
+          # Handle compression inside the objective function
+          working_par_t <- par_t
+          if (equal_variances) {
+            working_par_t <- expand_variances(par_t, K)
+          }
+          
+          # Transform parameters back to original parameter space
+          par <- untransform_parameters(working_par_t, "exogenous")
+          
+          mu <- mean_from_par(par, "exogenous")
+          sigma2 <- sigma2_from_par(par, "exogenous")
+          init_trans <- transp_from_par(par, "exogenous")
+          A <- A_from_par(par, "exogenous")
+          
+          # Calculate likelihood and return it
+          l <- Rfiltering_TVPXExo(mu, sigma2, init_trans, A, X_Exo, y, B, C)
+          return(l[1])
+        },
         lower = bounds$lower,
         upper = bounds$upper,
         X_Exo = X_Exo,

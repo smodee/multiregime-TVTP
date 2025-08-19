@@ -265,36 +265,6 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
   return(res)
 }
 
-#' Wrapper for the likelihood calculator to be used for max-likelihood estimation
-#'
-#' @param par_t Transformed parameters in unconstrained space
-#' @param y Observed time series increments
-#' @param B Burn-in to be excluded at the beginning of the time series
-#' @param C Cut-off to be excluded at the end of the time series
-#' @return Negative log-likelihood of observed data under the model
-#' @details
-#' Transforms parameters from unconstrained space back to natural space
-#' and calls the filtering function to calculate the likelihood.
-#'
-#' @examples
-#' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A), "tvp")
-#' result <- nlminb(transformed_params, Rfiltering.single.trasf_TVP, 
-#'                 y = y, B = 100, C = 50)
-Rfiltering.single.trasf_TVP <- function(par_t, y, B, C) {
-  # Transform parameters back to original parameter space
-  par <- untransform_parameters(par_t, "tvp")
-  
-  mu <- mean_from_par(par, "tvp")
-  sigma2 <- sigma2_from_par(par, "tvp")
-  init_trans <- transp_from_par(par, "tvp")
-  A <- A_from_par(par, "tvp")
-  
-  # Calculate likelihood and return it
-  l <- Rfiltering_TVP(mu, sigma2, init_trans, A, y, B, C)
-  return(l[1])
-}
-
 #' Estimate parameters for the autoregressive regime-switching model (TVP)
 #'
 #' @param y Observed time series
@@ -440,7 +410,25 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
       trace_setting <- if (verbose > 1) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = Rfiltering.single.trasf_TVP,
+        objective = function(par_t, y, B, C) {
+          # Handle compression inside the objective function
+          working_par_t <- par_t
+          if (equal_variances) {
+            working_par_t <- expand_variances(par_t, K)
+          }
+          
+          # Transform parameters back to original parameter space
+          par <- untransform_parameters(working_par_t, "tvp")
+          
+          mu <- mean_from_par(par, "tvp")
+          sigma2 <- sigma2_from_par(par, "tvp")
+          init_trans <- transp_from_par(par, "tvp")
+          A <- A_from_par(par, "tvp")
+          
+          # Calculate likelihood and return it
+          l <- Rfiltering_TVP(mu, sigma2, init_trans, A, y, B, C)
+          return(l[1])
+        },
         lower = bounds$lower,
         upper = bounds$upper,
         y = y,

@@ -532,45 +532,6 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
   return(res)
 }
 
-#' Wrapper for the likelihood calculator to be used for max-likelihood estimation
-#'
-#' @param par_t Transformed parameters in unconstrained space
-#' @param y Observed time series increments
-#' @param B_burnin Burn-in to be excluded at the beginning of the time series
-#' @param C Cut-off to be excluded at the end of the time series
-#' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
-#' @param scaling_method Score scaling method (default: "simple")
-#' @return Negative log-likelihood of observed data under the model
-#' @details
-#' Transforms parameters from unconstrained space back to natural space
-#' and calls the filtering function to calculate the likelihood.
-#'
-#' @examples
-#' # Optimize parameters for a 3-regime model
-#' transformed_params <- transform_parameters(c(mu, sigma2, init_trans, A, B), "gas")
-#' result <- nlminb(transformed_params, Rfiltering.single.trasf_GAS, 
-#'                 y = y, B_burnin = 100, C = 50)
-Rfiltering.single.trasf_GAS <- function(par_t, y, B_burnin, C, 
-                                        n_nodes = 30, scaling_method = "simple") {
-  # Transform parameters back to original parameter space
-  par <- untransform_parameters(par_t, "gas")
-  
-  # Determine the number of regimes
-  K <- count_regime(par, "gas")
-  n_transition <- K*(K-1)
-  
-  # Extract the components
-  mu <- mean_from_par(par, "gas")
-  sigma2 <- sigma2_from_par(par, "gas")
-  init_trans <- transp_from_par(par, "gas")
-  A <- A_from_par(par, "gas")
-  B <- B_from_par(par, "gas")
-  
-  # Calculate likelihood and return it
-  l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C, n_nodes, scaling_method)
-  return(l[1])
-}
-
 #' Estimate parameters for the score-driven (GAS) regime-switching model
 #'
 #' @param y Observed time series
@@ -737,8 +698,14 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
       optimization_result <- nlminb(
         start = transformed_params,
         objective = function(par_t, y, B_burnin, C, n_nodes, scaling_method, use_fallback, A_threshold) {
+          # Handle compression inside the objective function
+          working_par_t <- par_t
+          if (equal_variances) {
+            working_par_t <- expand_variances(par_t, K)
+          }
+          
           # Transform parameters back to original parameter space
-          par <- untransform_parameters(par_t, "gas")
+          par <- untransform_parameters(working_par_t, "gas")
           
           # Extract the components
           mu <- mean_from_par(par, "gas")
