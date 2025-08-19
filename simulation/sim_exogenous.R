@@ -5,6 +5,7 @@
 
 # Load required model implementations
 source("models/model_exogenous.R")
+source("helpers/parallel_utils.R")
 
 #' Run a comprehensive simulation study for the exogenous model
 #'
@@ -12,20 +13,22 @@ source("models/model_exogenous.R")
 #' @param sample_sizes Vector of sample sizes to test
 #' @param K Number of regimes
 #' @param param_settings List with parameter settings
-#' @param exo_process Function to generate exogenous process
+#' @param exo_process Function to generate exogenous process or matrix of pre-generated processes
 #' @param seed Random seed for reproducibility
 #' @param output_dir Directory to save detailed results (NULL for no saving)
 #' @param n_starts_default Default number of starting points for estimation (default: 3)
 #' @param sim_parallel Simulation-level parallelization: "auto", TRUE, FALSE (default: "auto")
-#' @param max_cores Maximum cores to use (default: NULL, uses detectCores() - 1)
+#' @param max_cores Maximum cores to use (default: NULL, uses conservative detection)
+#' @param reserve_cores Number of cores to reserve for system (default: 2)
 #' @param verbose Whether to print progress information (default: TRUE)
 #' @return Data frame with simulation results
 #' @details
 #' Conducts a comprehensive simulation study for the exogenous model with different
 #' sample sizes and measures estimation accuracy and computational performance.
 #' 
-#' Uses coordinated parallelization that intelligently allocates cores between
-#' simulation-level and estimation-level parallelization based on study size.
+#' Uses conservative parallel processing that reserves cores for system use
+#' and intelligently allocates between simulation-level and estimation-level
+#' parallelization based on available resources.
 #'
 #' @examples
 #' # Define parameter settings
@@ -45,8 +48,7 @@ source("models/model_exogenous.R")
 #'   sample_sizes = c(500, 1000),
 #'   K = 3,
 #'   param_settings = param_settings,
-#'   exo_process = exo_gen,
-#'   sim_parallel = "auto"
+#'   exo_process = exo_gen
 #' )
 run_exo_simulation_study <- function(num_repetitions = 100, 
                                      sample_sizes = c(250, 500, 1000), 
@@ -58,62 +60,46 @@ run_exo_simulation_study <- function(num_repetitions = 100,
                                      n_starts_default = 3,
                                      sim_parallel = "auto",
                                      max_cores = NULL,
+                                     reserve_cores = 2,
                                      verbose = TRUE) {
   
   # Set random seed for reproducibility
   set.seed(seed)
   
-  # Determine available cores
-  if (is.null(max_cores)) {
-    total_cores <- max(1, parallel::detectCores() - 1)
-  } else {
-    total_cores <- max(1, min(max_cores, parallel::detectCores() - 1))
-  }
+  # Get conservative core count
+  total_cores <- get_conservative_cores(max_cores, reserve_cores)
   
-  # Intelligent parallelization strategy
+  # Get parallel allocation strategy
+  allocation <- get_parallel_allocation(total_cores, num_repetitions, n_starts_default)
+  
+  # Determine if we should use simulation-level parallelization
   if (sim_parallel == "auto") {
-    # Use coordinated parallelization for larger studies
-    use_sim_parallel <- (num_repetitions >= 20 && total_cores >= 4)
+    # Auto mode: use allocation strategy (no longer have coordinated mode)
+    use_sim_parallel <- (allocation$sim_workers > 1)
   } else {
-    use_sim_parallel <- as.logical(sim_parallel)
+    use_sim_parallel <- as.logical(sim_parallel) && (allocation$sim_workers > 1)
   }
   
-  # Calculate optimal core allocation
-  if (use_sim_parallel && num_repetitions > 1) {
-    # Parallelize both simulation and estimation levels
-    sim_workers <- min(total_cores, num_repetitions, 
-                       max(2, total_cores %/% 2))  # At least 2 cores per worker
-    cores_per_sim <- max(1, total_cores %/% sim_workers)
-    n_starts_per_sim <- min(n_starts_default, cores_per_sim)
-    
-    # Validation check: ensure we don't waste cores
-    if (cores_per_sim > n_starts_per_sim && verbose) {
-      cat("Note: Adjusting cores per simulation from", cores_per_sim, 
-          "to", n_starts_per_sim, "to match starting points\n")
-      cores_per_sim <- n_starts_per_sim
-    }
-    
-    parallel_strategy <- "coordinated"
-  } else {
-    # Use only estimation-level parallelization
-    sim_workers <- 1
-    cores_per_sim <- total_cores
-    n_starts_per_sim <- min(n_starts_default, cores_per_sim)
-    parallel_strategy <- "estimation_only"
+  # Override allocation if user explicitly disabled simulation parallelization
+  if (!use_sim_parallel) {
+    allocation <- list(
+      sim_workers = 1L,
+      cores_per_sim = total_cores
+    )
   }
   
   if (verbose) {
-    cat("=== Simulation Study Configuration ===\n")
+    cat("=== EXOGENOUS MODEL SIMULATION STUDY ===\n")
     cat("Repetitions:", num_repetitions, "\n")
     cat("Sample sizes:", paste(sample_sizes, collapse = ", "), "\n")
-    cat("Total cores available:", total_cores, "\n")
-    cat("Parallelization strategy:", parallel_strategy, "\n")
-    if (use_sim_parallel) {
-      cat("Simulation workers:", sim_workers, "\n")
-      cat("Cores per simulation:", cores_per_sim, "\n")
+    cat("Total cores available:", total_cores, "(", reserve_cores, "reserved)\n")
+    cat("Parallel strategy:", describe_parallel_strategy(allocation), "\n")
+    if (allocation$sim_workers > 1) {
+      cat("Simulation workers:", allocation$sim_workers, "\n")
+      cat("Cores per simulation:", allocation$cores_per_sim, "\n")
     }
-    cat("Starting points per estimation:", n_starts_per_sim, "\n")
-    cat("======================================\n\n")
+    cat("Starting points per estimation:", n_starts_default, "\n")
+    cat("========================================\n\n")
   }
   
   # Set up parameter defaults
@@ -150,16 +136,25 @@ run_exo_simulation_study <- function(num_repetitions = 100,
   B <- 100
   C <- 50
   
+  # Initialize results container
+  all_results <- data.frame()
+  
   # Define the single repetition function for potential parallelization
   run_single_repetition <- function(rep, N) {
-    # Generate exogenous process
-    X_Exo <- exo_process(N + B + C)
-    
     # Time the data generation
     start_time <- Sys.time()
     
-    # Generate a single path
-    data_sim <- dataexoCD(1, N + B + C, mu, sigma2, init_trans, A, X_Exo, burn_in = 0)
+    # Generate exogenous process
+    if (is.function(exo_process)) {
+      X_exo <- exo_process(N + B + C)
+    } else if (is.matrix(exo_process) && nrow(exo_process) >= rep) {
+      X_exo <- exo_process[rep, 1:(N + B + C)]
+    } else {
+      stop("exo_process must be a function or matrix with sufficient rows")
+    }
+    
+    # Generate a single path with exogenous process
+    data_sim <- dataTVPXExoCD(1, N + B + C, mu, sigma2, init_trans, A, X_exo, burn_in = 0)
     
     # Extract the data
     y <- data_sim[1,]
@@ -169,19 +164,22 @@ run_exo_simulation_study <- function(num_repetitions = 100,
     # Time the estimation
     start_time <- Sys.time()
     
-    # Estimate the model with coordinated parallelization
+    # Estimate the model with proper core allocation
     tryCatch({
+      # Only enable estimation parallelization for estimation-only strategy
+      use_estimation_parallel <- (allocation$sim_workers == 1 && allocation$cores_per_sim > 1)
+      
       estimate <- estimate_exo_model(
         y = y,
-        X_Exo = X_Exo,
+        X_exo = X_exo,
         K = K,
         B = B,
         C = C,
         initial_params = NULL,
         bounds = NULL,
-        n_starts = n_starts_per_sim,
-        parallel = (cores_per_sim > 1),
-        cores = cores_per_sim,
+        n_starts = n_starts_default,
+        parallel = use_estimation_parallel,
+        cores = allocation$cores_per_sim,
         seed = seed + rep,  # Ensure reproducible but different seeds
         verbose = FALSE
       )
@@ -214,52 +212,24 @@ run_exo_simulation_study <- function(num_repetitions = 100,
         Sigma2Error = sigma2_error,
         InitTransError = init_trans_error,
         AError = A_error,
-        NStarts = n_starts_per_sim,
-        CoresUsed = cores_per_sim,
-        ParallelStrategy = parallel_strategy
+        NStarts = n_starts_default,
+        CoresPerSim = allocation$cores_per_sim,
+        ParallelStrategy = describe_parallel_strategy(allocation)
       )
       
-      if (verbose && !use_sim_parallel) {
-        cat("Repetition", rep, "completed. LogLik:", 
-            round(estimate$diagnostics$loglik, 2), "\n")
-      }
-      
-      # Save detailed results if output directory is provided
-      if (!is.null(output_dir)) {
-        dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-        
-        sim_details <- list(
-          parameters = param_settings,
-          estimates = estimate,
-          y = y,
-          X_Exo = X_Exo,
-          simulation_info = list(
-            N = N,
-            rep = rep,
-            K = K,
-            seed = seed,
-            gen_time = gen_time,
-            est_time = est_time,
-            parallel_strategy = parallel_strategy,
-            n_starts = n_starts_per_sim,
-            cores_used = cores_per_sim
-          )
-        )
-        
-        save_file <- file.path(output_dir, 
-                               sprintf("exo_sim_N%d_rep%d_K%d.rds", N, rep, K))
-        saveRDS(sim_details, save_file)
+      if (verbose && allocation$sim_workers == 1) {
+        cat("Repetition", rep, "completed.\n")
       }
       
       return(result)
       
     }, error = function(e) {
+      # Handle estimation failures gracefully
       if (verbose) {
-        cat("Error in repetition", rep, ":", e$message, "\n")
+        cat("Repetition", rep, "failed:", e$message, "\n")
       }
       
-      # Return error result
-      data.frame(
+      result <- data.frame(
         SampleSize = N,
         Repetition = rep,
         K = K,
@@ -272,29 +242,13 @@ run_exo_simulation_study <- function(num_repetitions = 100,
         Sigma2Error = NA,
         InitTransError = NA,
         AError = NA,
-        NStarts = n_starts_per_sim,
-        CoresUsed = cores_per_sim,
-        ParallelStrategy = parallel_strategy,
-        ErrorMessage = e$message
+        NStarts = n_starts_default,
+        CoresPerSim = allocation$cores_per_sim,
+        ParallelStrategy = describe_parallel_strategy(allocation)
       )
+      
+      return(result)
     })
-  }
-  
-  # Prepare results storage
-  all_results <- data.frame()
-  
-  # Set up parallel processing if using simulation-level parallelization
-  if (use_sim_parallel && requireNamespace("future.apply", quietly = TRUE)) {
-    original_plan <- future::plan()
-    future::plan(future::multisession, workers = sim_workers)
-    on.exit(future::plan(original_plan), add = TRUE)
-    
-    if (verbose) {
-      cat("Simulation-level parallelization enabled with", sim_workers, "workers\n\n")
-    }
-  } else if (use_sim_parallel) {
-    warning("future.apply package not available. Running simulations sequentially.")
-    use_sim_parallel <- FALSE
   }
   
   # Loop through sample sizes
@@ -304,7 +258,11 @@ run_exo_simulation_study <- function(num_repetitions = 100,
     }
     
     # Run repetitions (either in parallel or sequential)
-    if (use_sim_parallel && requireNamespace("future.apply", quietly = TRUE)) {
+    if (allocation$sim_workers > 1 && requireNamespace("future.apply", quietly = TRUE)) {
+      # Set up simulation-level parallelization
+      future::plan(future::multisession, workers = allocation$sim_workers)
+      on.exit(future::plan(future::sequential), add = TRUE)
+      
       # Parallel execution across repetitions
       rep_results <- future.apply::future_lapply(1:num_repetitions, function(rep) {
         run_single_repetition(rep, N)
@@ -348,14 +306,43 @@ run_exo_simulation_study <- function(num_repetitions = 100,
   
   if (verbose) {
     total_time <- sum(all_results$EstimationTime, na.rm = TRUE)
-    cat("=== Study Completed ===\n")
+    cat("=== STUDY COMPLETED ===\n")
     cat("Total estimation time:", round(total_time, 2), "seconds\n")
-    cat("Strategy used:", parallel_strategy, "\n")
-    if (use_sim_parallel) {
-      cat("Theoretical speedup from coordination: ~", 
-          round(sim_workers, 1), "x\n")
+    cat("Strategy used:", describe_parallel_strategy(allocation), "\n")
+    if (!is.null(output_dir)) {
+      cat("Results saved to:", output_dir, "\n")
     }
-    cat("======================\n")
+    cat("=======================\n")
+  }
+  
+  # Save detailed results if requested
+  if (!is.null(output_dir)) {
+    if (!dir.exists(output_dir)) {
+      dir.create(output_dir, recursive = TRUE)
+    }
+    
+    # Save main results
+    results_file <- file.path(output_dir, paste0("exo_simulation_results_", 
+                                                 format(Sys.Date(), "%Y%m%d"), ".csv"))
+    write.csv(all_results, results_file, row.names = FALSE)
+    
+    # Save configuration
+    config_file <- file.path(output_dir, paste0("exo_simulation_config_", 
+                                                format(Sys.Date(), "%Y%m%d"), ".txt"))
+    config_info <- list(
+      timestamp = Sys.time(),
+      num_repetitions = num_repetitions,
+      sample_sizes = sample_sizes,
+      K = K,
+      param_settings = param_settings,
+      seed = seed,
+      total_cores = total_cores,
+      reserve_cores = reserve_cores,
+      allocation = allocation,
+      parallel_strategy = describe_parallel_strategy(allocation)
+    )
+    
+    writeLines(capture.output(str(config_info)), config_file)
   }
   
   return(all_results)
