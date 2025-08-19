@@ -685,12 +685,9 @@ compress_variances <- function(params, K, model_type = c("constant", "tvp", "exo
     stop("Parameter vector cannot be empty")
   }
   
-  # Extract components
+  # Extract components (using first variance as the representative value)
   mu <- params[1:K]
-  sigma2 <- params[(K+1):(2*K)]
-  
-  # Calculate shared variance (using mean of individual variances)
-  sigma2_shared <- mean(sigma2)
+  sigma2_shared <- params[K+1]
   
   # Get remaining parameters (transition probs, A, B, etc.)
   if (length(params) > 2*K) {
