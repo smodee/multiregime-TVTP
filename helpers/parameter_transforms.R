@@ -659,3 +659,138 @@ validate_transformation_consistency <- function(par, model_type, tolerance = 1e-
   
   return(TRUE)
 }
+
+#' Compress variance parameters for equal variance constraint
+#'
+#' @param params Full parameter vector in natural space
+#' @param K Number of regimes
+#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
+#' @return Compressed parameter vector with single variance parameter
+#' @details
+#' Converts a parameter vector with K separate variance parameters to one with
+#' a single shared variance parameter. Used when equal_variances = TRUE.
+#' 
+#' The compression uses the mean of the K variance values to create the single
+#' shared variance parameter.
+#'
+#' @examples
+#' # TVP model with 3 regimes: [mu1, mu2, mu3, σ²1, σ²2, σ²3, trans..., A...]
+#' full_params <- c(-1, 0, 1, 0.5, 0.6, 0.4, rep(0.2, 6), rep(0.1, 6))
+#' compressed <- compress_variances(full_params, K = 3, "tvp")
+#' # Result: [mu1, mu2, mu3, σ²_avg, trans..., A...]
+compress_variances <- function(params, K, model_type = c("constant", "tvp", "exogenous", "gas")) {
+  model_type <- match.arg(model_type)
+  
+  if (length(params) == 0) {
+    stop("Parameter vector cannot be empty")
+  }
+  
+  # Extract components
+  mu <- params[1:K]
+  sigma2 <- params[(K+1):(2*K)]
+  
+  # Calculate shared variance (using mean of individual variances)
+  sigma2_shared <- mean(sigma2)
+  
+  # Get remaining parameters (transition probs, A, B, etc.)
+  if (length(params) > 2*K) {
+    remaining <- params[(2*K+1):length(params)]
+    compressed_params <- c(mu, sigma2_shared, remaining)
+  } else {
+    compressed_params <- c(mu, sigma2_shared)
+  }
+  
+  # Add attributes to track the transformation
+  attr(compressed_params, "compressed") <- TRUE
+  attr(compressed_params, "original_K") <- K
+  attr(compressed_params, "model_type") <- model_type
+  attr(compressed_params, "original_length") <- length(params)
+  
+  return(compressed_params)
+}
+
+#' Expand single variance parameter to K regime-specific variances
+#'
+#' @param params Compressed parameter vector with single variance
+#' @param K Number of regimes  
+#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
+#' @return Full parameter vector with K identical variance parameters
+#' @details
+#' Converts a parameter vector with a single shared variance parameter back to
+#' one with K identical variance parameters. Used to restore the expected
+#' parameter structure after optimization with equal_variances = TRUE.
+#'
+#' @examples
+#' # Compressed TVP: [mu1, mu2, mu3, σ²_shared, trans..., A...]
+#' compressed <- c(-1, 0, 1, 0.5, rep(0.2, 6), rep(0.1, 6))
+#' expanded <- expand_variances(compressed, K = 3, "tvp")  
+#' # Result: [mu1, mu2, mu3, σ², σ², σ², trans..., A...]
+expand_variances <- function(params, K, model_type = c("constant", "tvp", "exogenous", "gas")) {
+  model_type <- match.arg(model_type)
+  
+  if (length(params) == 0) {
+    stop("Parameter vector cannot be empty")
+  }
+  
+  # Extract components
+  mu <- params[1:K]
+  sigma2_shared <- params[K+1]
+  
+  # Expand shared variance to K identical values
+  sigma2_expanded <- rep(sigma2_shared, K)
+  
+  # Get remaining parameters
+  if (length(params) > K+1) {
+    remaining <- params[(K+2):length(params)]
+    expanded_params <- c(mu, sigma2_expanded, remaining)
+  } else {
+    expanded_params <- c(mu, sigma2_expanded)
+  }
+  
+  # Add attributes to track the transformation
+  attr(expanded_params, "expanded") <- TRUE
+  attr(expanded_params, "target_K") <- K
+  attr(expanded_params, "model_type") <- model_type
+  
+  return(expanded_params)
+}
+
+#' Check if parameter vector represents compressed variances
+#'
+#' @param params Parameter vector to check
+#' @return TRUE if parameters were compressed, FALSE otherwise
+#' @details
+#' Helper function to check if a parameter vector has been compressed
+#' using compress_variances(). Useful for conditional logic.
+is_compressed_variances <- function(params) {
+  return(!is.null(attr(params, "compressed")) && attr(params, "compressed"))
+}
+
+#' Calculate expected parameter length for compressed vs full parameterization
+#'
+#' @param K Number of regimes
+#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
+#' @param equal_variances Whether variances are constrained to be equal
+#' @return Expected length of parameter vector
+#' @details
+#' Helper function to calculate the expected parameter vector length based on
+#' the model type and variance constraint setting.
+expected_param_length <- function(K, model_type = c("constant", "tvp", "exogenous", "gas"), 
+                                  equal_variances = FALSE) {
+  model_type <- match.arg(model_type)
+  
+  # Base lengths for unconstrained case
+  base_lengths <- switch(model_type,
+                         "constant" = K + K + K*(K-1),                    # mu + sigma2 + trans
+                         "tvp" = K + K + K*(K-1) + K*(K-1),               # mu + sigma2 + trans + A  
+                         "exogenous" = K + K + K*(K-1) + K*(K-1),         # mu + sigma2 + trans + A
+                         "gas" = K + K + K*(K-1) + K*(K-1) + K*(K-1)      # mu + sigma2 + trans + A + B
+  )
+  
+  # Adjust for variance constraint (saves K-1 parameters)
+  if (equal_variances) {
+    return(base_lengths - (K - 1))
+  } else {
+    return(base_lengths)
+  }
+}
