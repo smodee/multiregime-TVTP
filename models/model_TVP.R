@@ -199,7 +199,7 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
   p_trans <- matrix(0, nrow=n_transition, ncol=M)
   
   # Set initial values
-  f[,1] <- omega
+  f[,1] <- omega_LR
   p_trans_raw <- logistic(f[,1])
   p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
   
