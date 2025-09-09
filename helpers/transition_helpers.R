@@ -1,186 +1,438 @@
-#' Create a transition matrix from a vector of off-diagonal probabilities
-#'
-#' @param probs A vector of off-diagonal transition probabilities
-#' @param check_validity Logical; whether to check that the resulting matrix is valid (default: TRUE)
-#' @return A properly formatted Markov transition matrix
-#'
-#' @details 
-#' This function accepts off-diagonal transition probabilities specified row by row.
-#' For a K-state model, the length of probs should be K*(K-1).
+#' Transition Matrix Helper Functions for Multi-Regime TVTP Models
 #' 
-#' For example, in a 2-state model, probs = c(p12, p21).
-#' For a 3-state model, probs = c(p12, p13, p21, p23, p31, p32).
+#' This file provides functions for creating and manipulating transition matrices
+#' with support for both diagonal and off-diagonal parameterizations.
 #'
-#' The diagonal elements are calculated to ensure each row sums to 1.
+#' DIAGONAL VS OFF-DIAGONAL PARAMETERIZATIONS:
+#' ===========================================
+#' 
+#' OFF-DIAGONAL PARAMETERIZATION (diag_probs = FALSE):
+#' - Uses K*(K-1) parameters representing all off-diagonal elements p_ij (i≠j)
+#' - Diagonal elements calculated as: p_ii = 1 - sum(p_ij for j≠i)
+#' - Default for new implementation, allows arbitrary transition structures
+#' - For K=2: [p12, p21] → matrix [[p11, p12], [p21, p22]] where p11=1-p12, p22=1-p21
+#'
+#' DIAGONAL PARAMETERIZATION (diag_probs = TRUE):
+#' - Uses K parameters representing diagonal elements p_11, p_22, ..., p_KK
+#' - Off-diagonal elements equal within each row: p_ij = (1-p_ii)/(K-1) for i≠j
+#' - Compatible with original simulation.R for K=2
+#' - For K=2: [p11, p22] → matrix [[p11, 1-p11], [1-p22, p22]]
+#' - For K=3: [p11, p22, p33] → matrix with equal off-diagonal probabilities per row
+#'
+#' This dual system allows validation against the original implementation while
+#' maintaining flexibility for K>2 regime models.
+
+# Load required helper functions
+source("helpers/utility_functions.R")
+
+#' Create a transition matrix from probability parameters
+#'
+#' @param probs Vector of transition probability parameters
+#' @param diag_probs If TRUE, probs contains diagonal elements; if FALSE, off-diagonal elements
+#' @param check_validity Logical; whether to validate the resulting matrix (default: TRUE)
+#' @return A properly formatted Markov transition matrix
+#' @details
+#' This is the main function for creating transition matrices. It automatically
+#' determines the parameterization and creates the appropriate matrix.
+#' 
+#' For off-diagonal parameterization (diag_probs=FALSE):
+#' - Expects K*(K-1) parameters in row-major order excluding diagonal
+#' - Example K=3: [p12, p13, p21, p23, p31, p32]
+#' 
+#' For diagonal parameterization (diag_probs=TRUE):
+#' - Expects K parameters representing diagonal persistence probabilities
+#' - Example K=3: [p11, p22, p33]
 #'
 #' @examples
-#' # 2x2 matrix
-#' transition_matrix(c(0.3, 0.2))  # p12=0.3, p21=0.2
+#' # Off-diagonal parameterization (default)
+#' transition_matrix(c(0.3, 0.2), diag_probs = FALSE)  # 2x2 matrix
+#' 
+#' # Diagonal parameterization (original simulation.R style)
+#' transition_matrix(c(0.8, 0.9), diag_probs = TRUE)   # 2x2 matrix with p11=0.8, p22=0.9
+transition_matrix <- function(probs, diag_probs = FALSE, check_validity = TRUE) {
+  
+  if (!is.numeric(probs) || length(probs) == 0) {
+    stop("Input probabilities must be a non-empty numeric vector")
+  }
+  
+  if (diag_probs) {
+    return(transition_matrix_diagonal(probs, check_validity))
+  } else {
+    return(transition_matrix_offdiagonal(probs, check_validity))
+  }
+}
+
+#' Create transition matrix from diagonal parameterization
 #'
-#' # 3x3 matrix
-#' transition_matrix(c(0.1, 0.2, 0.3, 0.1, 0.2, 0.3))
-transition_matrix <- function(probs, check_validity = TRUE) {
-  # Check that input is numeric
-  if (!is.numeric(probs)) {
-    stop("Input probabilities must be numeric")
+#' @param diag_probs Vector of diagonal transition probabilities [p11, p22, ..., pKK]
+#' @param check_validity Logical; whether to validate the resulting matrix
+#' @return K x K transition matrix
+#' @details
+#' Creates a transition matrix where:
+#' - Diagonal elements are specified directly
+#' - Off-diagonal elements are equal within each row: p_ij = (1-p_ii)/(K-1) for i≠j
+#' 
+#' This matches the original simulation.R parameterization for K=2 and generalizes
+#' it to K>2 by assuming equal off-diagonal probabilities within each row.
+transition_matrix_diagonal <- function(diag_probs, check_validity = TRUE) {
+  
+  K <- length(diag_probs)
+  
+  if (K < 2) {
+    stop("Number of regimes must be >= 2")
   }
   
-  # Length of the input probabilities vector
-  n <- length(probs)
-  
-  # Determine the size of the transition matrix
-  m <- floor(0.5 + sqrt(0.25 + n))
-  if (m * (m - 1) != n) {
-    stop("Invalid length of probabilities vector. For K states, expected K*(K-1) probabilities.")
+  # Validate diagonal probabilities are in valid range
+  if (any(diag_probs <= 0) || any(diag_probs >= 1)) {
+    stop("Diagonal probabilities must be strictly between 0 and 1")
   }
   
-  # Initialize an empty transition matrix
-  t_mat <- matrix(0, nrow = m, ncol = m)
+  # Initialize transition matrix
+  t_mat <- matrix(0, nrow = K, ncol = K)
   
-  # Fill the transition matrix row by row with off-diagonal elements
-  idx <- 1
-  for (i in 1:m) {
-    for (j in 1:(m-1)) {
-      if (j < i) {
-        t_mat[i, j] <- probs[idx]
-        idx <- idx + 1
-      } else {
-        t_mat[i, j+1] <- probs[idx]
-        idx <- idx + 1
+  # Set diagonal elements and equal off-diagonal elements for each row
+  for (i in 1:K) {
+    t_mat[i, i] <- diag_probs[i]
+    
+    # Calculate equal off-diagonal probability for this row
+    off_diag_prob <- (1 - diag_probs[i]) / (K - 1)
+    
+    # Set all off-diagonal elements for this row
+    for (j in 1:K) {
+      if (i != j) {
+        t_mat[i, j] <- off_diag_prob
       }
     }
-    
-    # Calculate the diagonal element
-    stay_prob <- 1 - sum(t_mat[i, ])
-    t_mat[i, i] <- stay_prob
   }
   
-  # Only check validity if requested and not in a performance-critical loop
   if (check_validity) {
-    # Check for negative values
-    if (any(t_mat < -1e-10)) {  # Allow for minor numerical imprecision
-      neg_idx <- which(t_mat < 0, arr.ind = TRUE)
-      neg_values <- t_mat[neg_idx]
-      err_msg <- sprintf("Matrix contains negative values (min: %.6f). Off-diagonal elements may sum to >1.", 
-                         min(t_mat))
-      stop(err_msg)
-    }
-    
-    # Check if each row sums to 1 (allowing for some numerical tolerance)
-    row_sums <- rowSums(t_mat)
-    if (!all(abs(row_sums - 1) < 1e-10)) {
-      err_msg <- sprintf("Not all rows sum to 1. Row sums: %s", 
-                         paste(format(row_sums, digits = 6), collapse = ", "))
-      stop(err_msg)
-    }
+    validate_transition_matrix(t_mat)
   }
   
   return(t_mat)
 }
 
-#' Calculate the stationary distribution of a Markov transition matrix
+#' Create transition matrix from off-diagonal parameterization  
 #'
-#' @param probs Vector of off-diagonal probabilities or transition matrix
-#' @param tol Tolerance for detecting eigenvalue 1 (default: 1e-8)
-#' @param fallback_value What to return if no unique stationary distribution exists (default: NULL)
-#' @return The stationary distribution as a vector
-#'
+#' @param off_diag_probs Vector of off-diagonal transition probabilities
+#' @param check_validity Logical; whether to validate the resulting matrix
+#' @return K x K transition matrix
 #' @details
-#' Calculates the stationary distribution π that satisfies π = π⋅P, where P is the transition matrix.
-#' This is equivalent to finding the eigenvector corresponding to eigenvalue 1 of P^T.
+#' Creates a transition matrix from K*(K-1) off-diagonal elements specified
+#' in row-major order. Diagonal elements are calculated as p_ii = 1 - sum(p_ij for j≠i).
+#' 
+#' This is the default parameterization for the new implementation.
+transition_matrix_offdiagonal <- function(off_diag_probs, check_validity = TRUE) {
+  
+  n <- length(off_diag_probs)
+  
+  # Determine matrix size: K*(K-1) = n, so K^2 - K - n = 0
+  K <- (1 + sqrt(1 + 4*n)) / 2
+  
+  if (abs(K - round(K)) > 1e-10) {
+    stop(sprintf("Invalid length %d for off-diagonal probabilities. Expected K*(K-1) for some integer K >= 2.", n))
+  }
+  
+  K <- round(K)
+  
+  # Initialize transition matrix
+  t_mat <- matrix(0, nrow = K, ncol = K)
+  
+  # Fill off-diagonal elements row by row
+  idx <- 1
+  for (i in 1:K) {
+    for (j in 1:K) {
+      if (i != j) {
+        t_mat[i, j] <- off_diag_probs[idx]
+        idx <- idx + 1
+      }
+    }
+    
+    # Calculate diagonal element to make row sum to 1
+    t_mat[i, i] <- 1 - sum(t_mat[i, -i])
+  }
+  
+  if (check_validity) {
+    validate_transition_matrix(t_mat)
+  }
+  
+  return(t_mat)
+}
+
+#' Convert between diagonal and off-diagonal parameterizations
 #'
-#' If fallback_value is provided and no unique stationary distribution exists, returns the fallback instead of stopping.
+#' @param probs Vector of transition probability parameters
+#' @param from_diag If TRUE, converting FROM diagonal TO off-diagonal; if FALSE, the reverse
+#' @return Vector of probabilities in the target parameterization
+#' @details
+#' Converts between the two parameterization schemes. Useful for validation
+#' studies where you need to compare results using different parameterizations.
+#' 
+#' Note: Converting from off-diagonal to diagonal may lose information if the
+#' original off-diagonal probabilities were not equal within rows.
 #'
 #' @examples
-#' # Using off-diagonal transition probabilities
-#' stat_dist(c(0.3, 0.2))  # p12=0.3, p21=0.2
+#' # Convert diagonal to off-diagonal
+#' diag_params <- c(0.8, 0.9)  # p11=0.8, p22=0.9
+#' off_diag_params <- convert_parameterization(diag_params, from_diag = TRUE)
+#' # Result: [0.2, 0.1] representing p12=0.2, p21=0.1
+#' 
+#' # Convert back (should recover original structure, not exact values)
+#' recovered_diag <- convert_parameterization(off_diag_params, from_diag = FALSE)
+convert_parameterization <- function(probs, from_diag = TRUE) {
+  
+  if (!is.numeric(probs) || length(probs) == 0) {
+    stop("Input probabilities must be a non-empty numeric vector")
+  }
+  
+  if (from_diag) {
+    # Convert FROM diagonal TO off-diagonal
+    K <- length(probs)
+    
+    if (K < 2) {
+      stop("Need at least 2 diagonal probabilities")
+    }
+    
+    # Create transition matrix from diagonal parameterization
+    t_mat <- transition_matrix_diagonal(probs, check_validity = FALSE)
+    
+    # Extract off-diagonal elements in row-major order
+    off_diag_probs <- numeric(K * (K - 1))
+    idx <- 1
+    
+    for (i in 1:K) {
+      for (j in 1:K) {
+        if (i != j) {
+          off_diag_probs[idx] <- t_mat[i, j]
+          idx <- idx + 1
+        }
+      }
+    }
+    
+    return(off_diag_probs)
+    
+  } else {
+    # Convert FROM off-diagonal TO diagonal
+    n <- length(probs)
+    K <- (1 + sqrt(1 + 4*n)) / 2
+    
+    if (abs(K - round(K)) > 1e-10) {
+      stop("Invalid length for off-diagonal probabilities")
+    }
+    
+    K <- round(K)
+    
+    # Create transition matrix from off-diagonal parameterization
+    t_mat <- transition_matrix_offdiagonal(probs, check_validity = FALSE)
+    
+    # Extract diagonal elements
+    diag_probs <- diag(t_mat)
+    
+    return(diag_probs)
+  }
+}
+
+#' Validate that a matrix is a proper stochastic transition matrix
 #'
-#' # Using a transition matrix directly
-#' P <- matrix(c(0.7, 0.3, 0.2, 0.8), nrow = 2, byrow = TRUE)
+#' @param t_mat Transition matrix to validate
+#' @param tol Numerical tolerance for validation checks
+#' @return TRUE if valid, throws error otherwise
+validate_transition_matrix <- function(t_mat, tol = 1e-10) {
+  
+  if (!is.matrix(t_mat)) {
+    stop("Input must be a matrix")
+  }
+  
+  if (nrow(t_mat) != ncol(t_mat)) {
+    stop("Transition matrix must be square")
+  }
+  
+  K <- nrow(t_mat)
+  
+  # Check for negative values
+  if (any(t_mat < -tol)) {
+    min_val <- min(t_mat)
+    neg_positions <- which(t_mat < -tol, arr.ind = TRUE)
+    stop(sprintf("Transition matrix contains negative values (min: %.6f) at positions: %s", 
+                 min_val, paste(apply(neg_positions, 1, function(x) paste0("(", x[1], ",", x[2], ")")), collapse = ", ")))
+  }
+  
+  # Check that all values are <= 1 
+  if (any(t_mat > 1 + tol)) {
+    max_val <- max(t_mat)
+    large_positions <- which(t_mat > 1 + tol, arr.ind = TRUE)
+    stop(sprintf("Transition matrix contains values > 1 (max: %.6f) at positions: %s",
+                 max_val, paste(apply(large_positions, 1, function(x) paste0("(", x[1], ",", x[2], ")")), collapse = ", ")))
+  }
+  
+  # Check that rows sum to 1
+  row_sums <- rowSums(t_mat)
+  bad_rows <- which(abs(row_sums - 1) > tol)
+  
+  if (length(bad_rows) > 0) {
+    stop(sprintf("Rows %s do not sum to 1. Row sums: %s", 
+                 paste(bad_rows, collapse = ", "),
+                 paste(sprintf("%.6f", row_sums[bad_rows]), collapse = ", ")))
+  }
+  
+  return(TRUE)
+}
+
+#' Convert probability parameters to ensure valid transition matrix
+#'
+#' @param probs Vector of transition probability parameters
+#' @param diag_probs If TRUE, probs contains diagonal elements; if FALSE, off-diagonal elements  
+#' @param max_constraint Maximum allowed value to ensure positive diagonal/off-diagonal elements
+#' @return Vector of adjusted probabilities that will create a valid transition matrix
+#' @details
+#' Ensures that probability parameters will result in a valid stochastic matrix.
+#' For diagonal parameterization, constrains values to (0,1).
+#' For off-diagonal parameterization, ensures row sums don't exceed max_constraint.
+convert_to_valid_probs <- function(probs, diag_probs = FALSE, max_constraint = 0.99) {
+  
+  if (!is.numeric(probs) || length(probs) == 0) {
+    stop("Input probabilities must be a non-empty numeric vector")
+  }
+  
+  # Handle NAs and infinite values
+  if (any(is.na(probs) | is.infinite(probs))) {
+    warning("Invalid values (NA/Inf) detected in probabilities, replacing with default values")
+    probs[is.na(probs) | is.infinite(probs)] <- ifelse(diag_probs, 0.5, 0.1)
+  }
+  
+  if (diag_probs) {
+    # For diagonal parameterization: ensure all values in (0, 1)
+    probs <- pmax(0.01, pmin(0.99, probs))
+    return(probs)
+    
+  } else {
+    # For off-diagonal parameterization: ensure row sums don't exceed max_constraint
+    n <- length(probs)
+    K <- (1 + sqrt(1 + 4*n)) / 2
+    
+    if (abs(K - round(K)) > 1e-10) {
+      stop("Invalid length for off-diagonal probabilities")
+    }
+    
+    K <- round(K)
+    valid_probs <- numeric(length(probs))
+    idx <- 1
+    
+    for (i in 1:K) {
+      # Extract off-diagonal probabilities for this row
+      row_indices <- idx:(idx + K - 2)
+      row_probs <- probs[row_indices]
+      
+      # Ensure individual probabilities are in valid range
+      row_probs <- pmax(0.001, pmin(0.99, row_probs))
+      
+      # If row sum exceeds max_constraint, scale proportionally
+      row_sum <- sum(row_probs)
+      if (row_sum > max_constraint) {
+        scale_factor <- max_constraint / row_sum
+        row_probs <- row_probs * scale_factor
+      }
+      
+      valid_probs[row_indices] <- row_probs
+      idx <- idx + K - 1
+    }
+    
+    return(valid_probs)
+  }
+}
+
+#' Calculate the stationary distribution of a transition matrix
+#'
+#' @param probs Vector of probability parameters OR transition matrix
+#' @param diag_probs If probs is a vector, whether it uses diagonal parameterization
+#' @param method Method for calculation ("eigen" or "power")
+#' @param tol Tolerance for eigenvalue detection (default: 1e-8)
+#' @param fallback_value Value to return if no unique stationary distribution exists
+#' @return The stationary distribution as a vector
+#' @details
+#' Calculates the stationary distribution π such that π = π⋅P, where P is the transition matrix.
+#' 
+#' Two methods available:
+#' - "eigen": Uses eigendecomposition (faster, default)
+#' - "power": Uses power iteration (more stable for ill-conditioned matrices)
+#'
+#' @examples
+#' # Using diagonal parameters
+#' stat_dist(c(0.8, 0.9), diag_probs = TRUE)
+#' 
+#' # Using off-diagonal parameters  
+#' stat_dist(c(0.2, 0.1), diag_probs = FALSE)
+#' 
+#' # Using transition matrix directly
+#' P <- transition_matrix(c(0.8, 0.9), diag_probs = TRUE)
 #' stat_dist(P)
-stat_dist <- function(probs, tol = 1e-8, fallback_value = NULL) {
-  # Check if input is already a matrix
+stat_dist <- function(probs, diag_probs = FALSE, method = c("eigen", "power"), 
+                      tol = 1e-8, fallback_value = NULL) {
+  
+  method <- match.arg(method)
+  
+  # Convert to transition matrix if needed
   if (is.matrix(probs)) {
     t_mat <- probs
-    
-    # Verify it's a valid stochastic matrix
-    if (nrow(t_mat) != ncol(t_mat)) {
-      stop("Input matrix must be square")
-    }
-    
-    # Check row sums
-    row_sums <- rowSums(t_mat)
-    if (!all(abs(row_sums - 1) < 1e-10)) {
-      warning("Input matrix rows don't sum to 1. This may not be a valid transition matrix.")
-    }
+    validate_transition_matrix(t_mat)
   } else {
-    # Convert vector to transition matrix
-    t_mat <- transition_matrix(probs)
+    t_mat <- transition_matrix(probs, diag_probs = diag_probs, check_validity = TRUE)
   }
   
-  # Calculate the eigenvalues and eigenvectors of the transpose
-  eigen_decomp <- eigen(t(t_mat))
+  K <- nrow(t_mat)
   
-  # Find the eigenvector corresponding to eigenvalue 1
-  eigenvalue_1_idx <- which(abs(eigen_decomp$values - 1) < tol)
-  
-  if (length(eigenvalue_1_idx) != 1) {
-    if (!is.null(fallback_value)) {
-      warning("The transition matrix does not have a unique stationary distribution. Using fallback value.")
-      return(fallback_value)
-    } else {
-      stop("The transition matrix does not have a unique stationary distribution.")
+  if (method == "eigen") {
+    # Eigenvalue method
+    eigen_decomp <- eigen(t(t_mat))
+    
+    # Find eigenvalue closest to 1
+    eigenvalue_1_idx <- which.min(abs(eigen_decomp$values - 1))
+    
+    if (abs(eigen_decomp$values[eigenvalue_1_idx] - 1) > tol) {
+      if (!is.null(fallback_value)) {
+        warning("No eigenvalue close to 1 found. Using fallback value.")
+        return(fallback_value)
+      } else {
+        stop("The transition matrix does not have a stationary distribution (no eigenvalue ≈ 1).")
+      }
     }
+    
+    # Extract and normalize eigenvector
+    stationary_vector <- Re(eigen_decomp$vectors[, eigenvalue_1_idx])
+    
+    if (any(stationary_vector < 0)) {
+      stationary_vector <- -stationary_vector  # Flip sign if needed
+    }
+    
+    stationary_distribution <- stationary_vector / sum(stationary_vector)
+    
+  } else {
+    # Power iteration method
+    stationary_distribution <- stat_dist_power(t_mat, tol = tol)
   }
-  
-  # Extract the eigenvector and take the real part
-  # (it should be real, but might have small imaginary parts due to numerical issues)
-  stationary_vector <- Re(eigen_decomp$vectors[, eigenvalue_1_idx])
-  
-  # Normalize the vector to sum to 1
-  stationary_distribution <- stationary_vector / sum(stationary_vector)
   
   return(stationary_distribution)
 }
 
-#' Calculate the stationary distribution using power iteration
+#' Calculate stationary distribution using power iteration
 #'
-#' @param probs Vector of off-diagonal probabilities or transition matrix
-#' @param max_iter Maximum number of iterations (default: 1000)
+#' @param t_mat Transition matrix
+#' @param max_iter Maximum iterations (default: 1000) 
 #' @param tol Convergence tolerance (default: 1e-10)
 #' @param initial_dist Initial distribution (default: uniform)
-#' @return The stationary distribution as a vector
-#'
-#' @details
-#' An alternative method to calculate the stationary distribution through iterative application
-#' of the transition matrix. This is sometimes more numerically stable than the eigenvalue method.
-#'
-#' @examples
-#' # Using off-diagonal transition probabilities
-#' stat_dist_power(c(0.3, 0.2))  # p12=0.3, p21=0.2
-#'
-#' # Using a transition matrix directly
-#' P <- matrix(c(0.7, 0.3, 0.2, 0.8), nrow = 2, byrow = TRUE)
-#' stat_dist_power(P)
-stat_dist_power <- function(probs, max_iter = 1000, tol = 1e-10, initial_dist = NULL) {
-  # Check if input is already a matrix
-  if (is.matrix(probs)) {
-    t_mat <- probs
-  } else {
-    # Convert vector to transition matrix
-    t_mat <- transition_matrix(probs)
-  }
+#' @return Stationary distribution vector
+stat_dist_power <- function(t_mat, max_iter = 1000, tol = 1e-10, initial_dist = NULL) {
   
-  n <- nrow(t_mat)
+  K <- nrow(t_mat)
   
   # Initialize distribution
   if (is.null(initial_dist)) {
-    dist <- rep(1/n, n)  # Uniform distribution
+    dist <- rep(1/K, K)
   } else {
-    if (length(initial_dist) != n) {
-      stop("Initial distribution length must match the number of states")
+    if (length(initial_dist) != K) {
+      stop("Initial distribution length must match number of states")
     }
-    dist <- initial_dist / sum(initial_dist)  # Normalize
+    dist <- initial_dist / sum(initial_dist)
   }
   
   # Power iteration
@@ -199,78 +451,89 @@ stat_dist_power <- function(probs, max_iter = 1000, tol = 1e-10, initial_dist = 
   return(as.vector(dist))
 }
 
-#' Convert a vector of transition probabilities to ensure they form a valid stochastic matrix
+#' Determine number of regimes from parameter vector length
 #'
-#' @param probs Vector of off-diagonal probabilities to be validated
-#' @param K Number of states
-#' @param max_diag_sum Maximum sum of off-diagonal elements (default: 0.99)
-#' @return A modified vector of probabilities that will form a valid stochastic matrix
+#' @param probs Vector of probability parameters
+#' @param diag_probs Whether parameters use diagonal parameterization
+#' @return Number of regimes K
+infer_K_from_probs <- function(probs, diag_probs = FALSE) {
+  
+  n <- length(probs)
+  
+  if (diag_probs) {
+    # For diagonal parameterization: K parameters
+    return(n)
+  } else {
+    # For off-diagonal parameterization: K*(K-1) parameters
+    K <- (1 + sqrt(1 + 4*n)) / 2
+    
+    if (abs(K - round(K)) > 1e-10) {
+      stop(sprintf("Invalid parameter vector length %d for off-diagonal parameterization", n))
+    }
+    
+    return(round(K))
+  }
+}
+
+#' Create parameter vector with proper attributes for transition probabilities
 #'
-#' @details
-#' This function ensures that the probabilities will result in a valid transition matrix
-#' with non-negative elements and rows that sum to 1.
-#'
-#' @examples
-#' # Fix probabilities that would lead to negative diagonal elements
-#' convert_to_valid_probs(c(0.6, 0.6, 0.3, 0.3, 0.4, 0.4), K=3)
-convert_to_valid_probs <- function(probs, K, max_diag_sum = 0.99) {
-  # Check for NAs or NaNs in input
-  if (any(is.na(probs))) {
-    warning("NA values detected in probabilities, replacing with 0.5")
-    probs[is.na(probs)] <- 0.5
+#' @param probs Numeric vector of probability values
+#' @param diag_probs Whether these are diagonal or off-diagonal probabilities  
+#' @return Parameter vector with attributes set
+create_transition_params <- function(probs, diag_probs = FALSE) {
+  
+  if (!is.numeric(probs) || length(probs) == 0) {
+    stop("Probabilities must be a non-empty numeric vector")
   }
   
-  # Check that we have the right number of probabilities
-  expected_length <- K * (K - 1)
-  if (length(probs) != expected_length) {
-    stop(sprintf("Invalid length of probabilities vector. Expected %d, got %d.", 
-                 expected_length, length(probs)))
-  }
+  # Validate and clean probabilities
+  probs <- convert_to_valid_probs(probs, diag_probs = diag_probs)
   
-  # Initialize output
-  valid_probs <- numeric(length(probs))
-  idx <- 1
+  # Set attributes for identification
+  attr(probs, "diag_probs") <- diag_probs
+  attr(probs, "K") <- infer_K_from_probs(probs, diag_probs)
+  attr(probs, "param_type") <- "transition_probabilities"
+  
+  return(probs)
+}
+
+#' Print transition matrix in a readable format
+#'
+#' @param t_mat Transition matrix
+#' @param digits Number of decimal places to display (default: 4)
+print_transition_matrix <- function(t_mat, digits = 4) {
+  
+  K <- nrow(t_mat)
+  
+  cat("Transition Matrix (", K, "x", K, "):\n", sep = "")
+  cat("========================\n")
+  
+  # Create column headers
+  col_headers <- paste0("S", 1:K)
+  row_headers <- paste0("S", 1:K)
+  
+  # Print with row and column labels
+  cat(sprintf("%4s", ""), paste(sprintf("%8s", col_headers), collapse = ""), "\n")
   
   for (i in 1:K) {
-    # Calculate indices for this row's off-diagonal elements
-    row_indices <- idx:(idx + K - 2)
-    
-    # Safety check for indexing
-    if (length(row_indices) < 1 || max(row_indices) > length(probs)) {
-      warning(paste("Invalid indices for row", i, "- Using defaults"))
-      valid_probs[idx:(idx + K - 2)] <- rep(0.1, K - 1)
-      idx <- idx + K - 1
-      next
+    cat(sprintf("%4s", row_headers[i]))
+    for (j in 1:K) {
+      cat(sprintf("%8s", format(round(t_mat[i,j], digits), nsmall = digits)))
     }
-    
-    # Extract probabilities for this row
-    row_probs <- probs[row_indices]
-    
-    # Check for invalid values
-    if (any(is.na(row_probs)) || any(is.infinite(row_probs))) {
-      warning(paste("Invalid values in row", i, "- Using defaults"))
-      row_probs <- rep(0.1, length(row_indices))
-    }
-    
-    # If sum > max_diag_sum, scale them down proportionally
-    row_sum <- sum(row_probs)
-    
-    # Check if row_sum is valid
-    if (is.na(row_sum) || is.infinite(row_sum)) {
-      warning(paste("Invalid row sum for row", i, "- Using defaults"))
-      row_probs <- rep(0.1, length(row_indices))
-      row_sum <- sum(row_probs)
-    }
-    
-    if (row_sum > max_diag_sum) {
-      scale_factor <- max_diag_sum / row_sum
-      row_probs <- row_probs * scale_factor
-    }
-    
-    # Store the valid probabilities
-    valid_probs[row_indices] <- row_probs
-    idx <- idx + K - 1
+    cat("\n")
   }
   
-  return(valid_probs)
+  # Print row sums as validation
+  cat("\nRow sums: ")
+  row_sums <- rowSums(t_mat)
+  cat(paste(sprintf("%.6f", row_sums), collapse = ", "), "\n")
+  
+  # Calculate and print stationary distribution
+  tryCatch({
+    stat_dist_vec <- stat_dist(t_mat)
+    cat("Stationary distribution: ")
+    cat(paste(sprintf("%.4f", stat_dist_vec), collapse = ", "), "\n")
+  }, error = function(e) {
+    cat("Stationary distribution: Could not calculate\n")
+  })
 }
