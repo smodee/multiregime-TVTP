@@ -1,7 +1,8 @@
 #' Constant Transition Probability Regime-Switching Models
 #' 
 #' This file implements a regime-switching model with constant transition probabilities
-#' between regimes.
+#' between regimes. UPDATED to support both diagonal and off-diagonal transition
+#' probability parameterizations using the new attribute-based parameter system.
 #'
 #' Reference: Sendstad, Chronopoulos, & Li (2025) - The Value of Turning-Point 
 #' Detection for Optimal Investment
@@ -15,48 +16,49 @@ source("helpers/parameter_transforms.R")
 #'
 #' @param M Number of simulation runs to be performed
 #' @param N Length of the simulation runs (discretized time)
-#' @param mu Vector of true means corresponding to each regime
-#' @param sigma2 Vector of true variances corresponding to each regime
-#' @param trans_prob Transition probabilities (off-diagonal elements) for the latent process
+#' @param par Parameter vector with attributes (mu, sigma2, trans_prob)
 #' @param burn_in Number of burn-in observations to discard (default: 100)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
+#' Automatically detects configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Simulates data from a regime switching model where transition probabilities
 #' remain constant over time.
 #'
 #' @examples
-#' # Generate data for a 3-regime model
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' trans_prob_true <- rep(0.2, 6)  # Off-diagonal elements for a 3x3 matrix
-#' data_sim <- dataConstCD(10, 1000, mu_true, sigma2_true, trans_prob_true)
-dataConstCD <- function(M, N, mu, sigma2, trans_prob, burn_in = 100) {
-  # Parameters:
-  # M           Number of simulation runs to be performed
-  # N           Length of the simulation runs (discretized time)
-  # mu          Vector of true means corresponding to each regime
-  # sigma2      Vector of true variances corresponding to each regime
-  # trans_prob  Transition probabilities (off-diagonal elements)
-  # burn_in     Number of burn-in observations to discard
+#' # Generate data using diagonal parameterization (original style)
+#' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)  # mu1, mu2, sig1, sig2, p11, p22
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant", 
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
+#' data_sim <- dataConstCD(10, 1000, par_diag)
+#' 
+#' # Generate data using off-diagonal parameterization (new style)
+#' par_offdiag <- c(-1, 1, 0.5, 0.5, 0.2, 0.1)  # mu1, mu2, sig1, sig2, p12, p21
+#' par_offdiag <- set_parameter_attributes(par_offdiag, K=2, model_type="constant",
+#'                                         diag_probs=FALSE, equal_variances=FALSE)
+#' data_sim <- dataConstCD(10, 1000, par_offdiag)
+dataConstCD <- function(M, N, par, burn_in = 100) {
   
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
+  # Validate parameter vector and extract configuration
+  validate_parameter_attributes(par)
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  trans_prob <- extract_parameter_component(par, "trans_prob")
+  
+  # Handle equal variances: expand single variance to K variances for simulation
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
   }
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
-  
-  # Ensure we have the right number of transition probabilities
-  if (length(trans_prob) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(trans_prob)))
-  }
-  
-  # Validate transition probabilities and convert to a valid stochastic matrix
-  valid_trans_prob <- convert_to_valid_probs(trans_prob, K)
-  transition_matrix <- transition_matrix(valid_trans_prob)
+  # Create transition matrix using the appropriate parameterization
+  transition_mat <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = TRUE)
   
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
@@ -72,16 +74,17 @@ dataConstCD <- function(M, N, mu, sigma2, trans_prob, burn_in = 100) {
     y.sim <- numeric(total_length)                  # Random increments according to state
     
     # Initial state probabilities (stationary distribution or uniform)
-    start_dist <- try(stat_dist(transition_matrix), silent = TRUE)
-    if (inherits(start_dist, "try-error")) {
-      X_t[,1] <- rep(1/K, K)  # Fallback to uniform distribution
-    } else {
-      X_t[,1] <- start_dist
-    }
+    start_dist <- tryCatch({
+      stat_dist(transition_mat)
+    }, error = function(e) {
+      warning("Could not calculate stationary distribution, using uniform")
+      rep(1/K, K)
+    })
+    X_t[,1] <- start_dist
     
     for (t in 1:(total_length-1)) {
       # Generate predicted probabilities using the constant transition matrix
-      X_tlag[,t] <- transition_matrix %*% X_t[,t]
+      X_tlag[,t] <- transition_mat %*% X_t[,t]
       
       # Sample a state based on the predicted probabilities and 
       # simulate data conditional on that state
@@ -99,7 +102,7 @@ dataConstCD <- function(M, N, mu, sigma2, trans_prob, burn_in = 100) {
     }
     
     # For the last time point
-    X_tlag[,total_length] <- transition_matrix %*% X_t[,total_length-1]
+    X_tlag[,total_length] <- transition_mat %*% X_t[,total_length-1]
     S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
     y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
     
@@ -112,54 +115,52 @@ dataConstCD <- function(M, N, mu, sigma2, trans_prob, burn_in = 100) {
 
 #' Filter observed data through the constant transition probability regime-switching model
 #'
-#' @param mu Vector of means corresponding to each regime
-#' @param sigma2 Vector of variances corresponding to each regime
-#' @param trans_prob Transition probabilities (off-diagonal elements)
+#' @param par Parameter vector with attributes (mu, sigma2, trans_prob)
 #' @param y Observed time series increments
 #' @param B Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
+#' @param diagnostics Choose whether to store calculation diagnostics or not
 #' @return Negative log-likelihood of observed data under the model
 #' @details
+#' Automatically reads configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Filters observed data through the model to compute the likelihood.
 #' Returns the negative log-likelihood for compatibility with optimization functions.
 #'
 #' @examples
-#' # Calculate likelihood for a 3-regime model
-#' mu <- c(-2, 1, 2)
-#' sigma2 <- c(0.02, 0.2, 0.6)
-#' trans_prob <- rep(0.2, 6)
-#' y <- rnorm(1000) 
-#' loglik <- Rfiltering_Const(mu, sigma2, trans_prob, y, 100, 50)
-Rfiltering_Const <- function(mu, sigma2, trans_prob, y, B, C) {
-  # Parameters passed to the function are:
-  # mu          Vector of true means corresponding to each regime
-  # sigma2      Vector of true variances corresponding to each regime
-  # trans_prob  Transition probabilities (off-diagonal elements)
-  # y           Observed time series increments
-  # B           Burn-in to be excluded at the beginning of the time series
-  # C           Cut-off to be excluded at the end of the time series
+#' # Filter data using diagonal parameterization
+#' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant",
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
+#' y <- rnorm(1000)
+#' loglik <- Rfiltering_Const(par_diag, y, 100, 50)
+Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
+  # Validate parameter vector and extract configuration
+  if (diagnostics) {
+    validate_parameter_attributes(par)
+  }
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  trans_prob <- extract_parameter_component(par, "trans_prob")
+  
+  # Handle equal variances: expand single variance to K variances for filtering
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
   }
   
   # Determine length of the time series
   M <- length(y)
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
-  
-  # Ensure we have the right number of transition probabilities
-  if (length(trans_prob) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(trans_prob)))
-  }
-  
-  # Validate transition probabilities and convert to a valid stochastic matrix
-  valid_trans_prob <- convert_to_valid_probs(trans_prob, K)
-  transition_mat <- transition_matrix(valid_trans_prob)
+  # Create transition matrix using the appropriate parameterization
+  transition_mat <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = TRUE)
   
   # Initialize variables
   eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
@@ -167,13 +168,14 @@ Rfiltering_Const <- function(mu, sigma2, trans_prob, y, B, C) {
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
   X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
   
-  # Initialize state probabilities (stationary distribution or uniform)
-  start_dist <- try(stat_dist(transition_mat), silent = TRUE)
-  if (inherits(start_dist, "try-error")) {
-    X_t[,1] <- rep(1/K, K)  # Fallback to uniform distribution
-  } else {
-    X_t[,1] <- start_dist
-  }
+  # Initial state probabilities (stationary distribution or uniform)
+  start_dist <- tryCatch({
+    stat_dist(transition_mat)
+  }, error = function(e) {
+    warning("Could not calculate stationary distribution, using uniform")
+    rep(1/K, K)
+  })
+  X_t[,1] <- start_dist
   
   for (t in 1:(M-1)) {
     # Generate predicted probabilities using the constant transition matrix
@@ -213,198 +215,168 @@ Rfiltering_Const <- function(mu, sigma2, trans_prob, y, B, C) {
     stop("Error: No valid data points after applying burn-in and cut-off.")
   }
   
-  logLikSum <- sum(log(tot_lik[valid_indices]))
+  log_lik_values <- log(tot_lik[valid_indices])
   
-  # Return negative sum of log-likelihoods (for minimizing)
-  res <- -logLikSum
+  # Handle any remaining invalid values
+  log_lik_values[!is.finite(log_lik_values)] <- log(.Machine$double.eps)
   
-  # Store additional information as attributes
-  attr(res, "X.t") <- t(X_t)
-  attr(res, "X.tlag") <- t(X_tlag)
-  attr(res, "transition_matrix") <- transition_mat
+  # Calculate total negative log-likelihood
+  neg_log_lik <- -sum(log_lik_values)
   
-  return(res)
+  if (diagnostics) {
+    # Store additional information as attributes for diagnostics
+    attr(neg_log_lik, "X.t") <- X_t
+    attr(neg_log_lik, "X.tlag") <- X_tlag
+    attr(neg_log_lik, "eta") <- eta
+    attr(neg_log_lik, "tot.lik") <- tot_lik
+    attr(neg_log_lik, "transition_matrix") <- transition_mat
+    attr(neg_log_lik, "log_lik_values") <- log_lik_values
+    attr(neg_log_lik, "valid_indices") <- valid_indices
+    attr(neg_log_lik, "model_info") <- list(
+      K = K,
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      model_type = "constant"
+    )
+  }
+  
+  return(neg_log_lik)
 }
 
-#' Estimate parameters for the constant transition probability regime-switching model
+#' Estimate constant transition probability regime-switching model
 #'
-#' @param y Observed time series
+#' @param y Observed time series data
 #' @param K Number of regimes
-#' @param B Burn-in period to exclude from likelihood calculation
-#' @param C Cut-off period to exclude from likelihood calculation
-#' @param initial_params Initial parameter guesses (optional, only used when n_starts=1)
-#' @param bounds Parameter bounds for optimization in full parameter format (optional)
-#' @param n_starts Number of starting points for optimization (default: 1)
-#' @param parallel Whether to run multiple starts in parallel (default: FALSE)
-#' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
-#' @param seed Random seed for starting point generation (optional)
-#' @param verbose Whether to print progress information (default: TRUE)
-#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
-#' @return List with estimated parameters and model diagnostics
+#' @param diag_probs If TRUE, use diagonal transition probability parameterization
+#' @param equal_variances If TRUE, constrain all regimes to have equal variances
+#' @param n_starts Number of random starting points for optimization (default: 10)
+#' @param B Burn-in observations to exclude (default: 100)
+#' @param C Cut-off observations to exclude (default: 50)
+#' @param bounds Optional list with lower and upper parameter bounds
+#' @param parallel Enable parallel processing for multiple starts (default: TRUE)
+#' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
+#' @param seed Random seed for reproducibility (optional)
+#' @param verbose Verbosity level (0=silent, 1=basic, 2=detailed)
+#' @return List with estimation results including parameters, diagnostics, and metadata
 #' @details
-#' Estimates model parameters using maximum likelihood estimation.
-#' When n_starts > 1, generates multiple diverse starting points and runs
-#' optimization in parallel (if parallel=TRUE) to improve robustness against
-#' local optima. Returns the result with the highest likelihood.
-#' 
-#' Uses the future package for cross-platform parallel processing that works
-#' on Windows, macOS, and Linux. The output format is identical regardless 
-#' of single or multi-start estimation.
-#' 
-#' When equal_variances=TRUE, all regime variances are constrained to be equal
-#' by compressing the variance parameters during optimization and expanding them
-#' back afterward. Parameters and bounds should always be provided in full format
-#' (with separate variance for each regime); compression is handled internally.
+#' UPDATED to support both diagonal and off-diagonal transition probability parameterizations
+#' using the new attribute-based parameter system. This enables exact validation against
+#' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
-#' # Single start (current behavior)
-#' results <- estimate_constant_model(data, K=3)
+#' # Estimate model with diagonal probabilities (original style)
+#' y <- rnorm(1000)
+#' result_diag <- estimate_constant_model(y, K=2, diag_probs=TRUE, n_starts=5)
 #' 
-#' # Multi-start with parallel processing
-#' results <- estimate_constant_model(data, K=3, n_starts=10, parallel=TRUE)
-#' 
-#' # Multi-start sequential (for debugging)
-#' results <- estimate_constant_model(data, K=3, n_starts=5, parallel=FALSE)
-#' 
-#' # Constrain variances to be equal (useful for comparing with benchmarks)
-#' results <- estimate_constant_model(data, K=3, equal_variances=TRUE)
-estimate_constant_model <- function(y, K = 3, B = 100, C = 50, 
-                                    initial_params = NULL, bounds = NULL,
-                                    n_starts = 1, parallel = FALSE, cores = NULL,
-                                    seed = NULL, verbose = TRUE, equal_variances = FALSE) {
+#' # Estimate model with off-diagonal probabilities (new style)  
+#' result_offdiag <- estimate_constant_model(y, K=2, diag_probs=FALSE, n_starts=5)
+estimate_constant_model <- function(y, K, diag_probs = FALSE, equal_variances = FALSE,
+                                    n_starts = 10, B = 100, C = 50, bounds = NULL,
+                                    parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
-  # Set up cores (don't use more cores than starts)
-  if (is.null(cores)) {
-    cores <- max(1, parallel::detectCores() - 1)
+  # Input validation
+  if (!is.numeric(y) || length(y) == 0) {
+    stop("y must be a non-empty numeric vector")
   }
-  cores <- min(cores, n_starts)
-  
-  if (verbose) {
-    cat("Estimating Constant model with", K, "regimes")
-    if (equal_variances) {
-      cat(" (equal variances)")
-    }
-    cat("\n")
-    if (n_starts > 1) {
-      cat("Using", n_starts, "starting points")
-      if (parallel) {
-        cat(" with", cores, "cores in parallel\n")
-      } else {
-        cat(" sequentially\n")
-      }
-    } else {
-      cat("Using single starting point\n")
-    }
-    start_time <- Sys.time()
+  if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
+    stop("K must be an integer >= 2")
+  }
+  if (length(y) <= B + C + K) {
+    stop("Time series too short for specified burn-in and cut-off")
   }
   
-  # Set up parallel processing plan
-  if (parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE)) {
+  # Setup parallel processing
+  if (parallel) {
+    if (is.null(cores)) {
+      cores <- min(n_starts, future::availableCores() - 1, 4)  # Reasonable default
+    }
     future::plan(future::multisession, workers = cores)
-    on.exit(future::plan(future::sequential), add = TRUE)  # Cleanup
-    if (verbose) {
-      cat("Parallel processing enabled with future package\n")
-    }
   } else {
     future::plan(future::sequential)
-    if (parallel && n_starts > 1) {
-      warning("future.apply package not available, running sequentially")
-    }
   }
   
-  # Generate starting points
-  if (n_starts == 1 && !is.null(initial_params)) {
-    # Use user-provided starting point
-    starting_points <- list(initial_params)
-    if (verbose) {
-      cat("Using provided initial parameters\n")
-    }
-  } else {
-    # Generate diverse starting points
-    if (verbose && n_starts > 1) {
-      cat("Generating", n_starts, "diverse starting points...\n")
-    }
-    starting_points <- generate_starting_points(y, K, "constant", n_starts, seed)
+  if (verbose >= 1) {
+    cat("Estimating constant transition probability model\n")
+    cat("==============================================\n")
+    cat("K:", K, "regimes\n")
+    cat("Data points:", length(y), "(using", length(y) - B - C, "after burn-in/cut-off)\n")
+    cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
+    cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
+    cat("Starting points:", n_starts, "\n")
+    if (parallel) cat("Parallel processing:", cores, "cores\n")
+    cat("\n")
   }
   
-  # Create default bounds if none provided
+  # Generate diverse starting points using updated function
+  if (verbose >= 1) cat("Generating starting points...\n")
+  starting_points <- generate_starting_points(
+    y = y,
+    K = K,
+    model_type = "constant",
+    n_starts = n_starts,
+    diag_probs = diag_probs,
+    equal_variances = equal_variances,
+    seed = seed
+  )
+  
+  # Create parameter bounds if none provided
   if (is.null(bounds)) {
-    n_transition <- K * (K - 1)
+    # Calculate expected parameter count
+    expected_length <- calculate_expected_length(K, "constant", diag_probs, equal_variances)
     
-    lower_bounds <- c(rep(-Inf, K),               # No bounds on means
-                      rep(-Inf, K),               # Variance >= 0 (log-transformed)
-                      rep(-Inf, n_transition))    # Probabilities >= 0 (logit-transformed)
+    # Create default bounds for transformed parameters
+    lower_bounds <- c(rep(-Inf, K),                 # No bounds on means
+                      rep(-Inf, ifelse(equal_variances, 1, K)),  # Log-variances
+                      rep(-Inf, ifelse(diag_probs, K, K*(K-1))))  # Logit-probabilities
     
-    upper_bounds <- c(rep(Inf, K),                # No bounds on means
-                      rep(Inf, K),                # Variance unbounded
-                      rep(Inf, n_transition))     # Probabilities <= 1 (logit-transformed)
+    upper_bounds <- c(rep(Inf, K),                  # No bounds on means  
+                      rep(Inf, ifelse(equal_variances, 1, K)),   # Log-variances
+                      rep(Inf, ifelse(diag_probs, K, K*(K-1))))  # Logit-probabilities
     
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
-  }
-  
-  # Compress bounds if using equal variances (applies to both user-provided and default bounds)
-  if (equal_variances) {
-    bounds$lower <- compress_variances(bounds$lower, K)
-    bounds$upper <- compress_variances(bounds$upper, K)
   }
   
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
     
-    if (verbose && !parallel) {
+    if (verbose >= 2 && !parallel) {
       cat("  Starting point", start_idx, "of", n_starts, "\n")
     }
     
     tryCatch({
-      # 1. Transform parameters to unconstrained space for optimization
-      transformed_params <- transform_parameters(start_params, "constant")
+      # Transform parameters to unconstrained space for optimization
+      transformed_params <- transform_parameters(start_params)
       
-      # 2. Compress parameters (conditional)
-      if (equal_variances) {
-        transformed_params <- compress_variances(transformed_params, K)
-      }
-      
-      # 3. Run optimization (same way regardless of equal_variances)
-      trace_setting <- if (verbose > 1) 1 else 0
+      # Run optimization
+      trace_setting <- if (verbose >= 2) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = function(par_t, y, B, C) {
-          # Handle compression inside the objective function
-          working_par_t <- par_t
-          if (equal_variances) {
-            working_par_t <- expand_variances(par_t, K)
-          }
+        objective = function(par_t) {
+          # Transform parameters back to natural space with proper attributes
+          par_t_with_attrs <- transformed_params  # Copy attributes from start
+          par_t_with_attrs[] <- par_t  # Update values
+          attr(par_t_with_attrs, "parameterization") <- "transformed"
           
-          # Transform parameters back to original parameter space
-          par <- untransform_parameters(working_par_t, "constant")
+          par_natural <- untransform_parameters(par_t_with_attrs)
           
-          mu <- mean_from_par(par, "constant")
-          sigma2 <- sigma2_from_par(par, "constant")
-          trans_prob <- transp_from_par(par, "constant")
-          
-          # Calculate likelihood and return it
-          l <- Rfiltering_Const(mu, sigma2, trans_prob, y, B, C)
-          return(l[1])
+          # Calculate negative log-likelihood
+          neg_log_lik <- Rfiltering_Const(par_natural, y, B, C)
+          return(neg_log_lik)
         },
         lower = bounds$lower,
         upper = bounds$upper,
-        y = y,
-        B = B,
-        C = C,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
       
-      # 4. Decompress parameters (conditional)
-      result_params <- optimization_result$par
-      if (equal_variances) {
-        result_params <- expand_variances(result_params, K)
-      }
+      # Transform final parameters back to natural space
+      final_par_t <- transformed_params  # Copy attributes
+      final_par_t[] <- optimization_result$par  # Update values
+      attr(final_par_t, "parameterization") <- "transformed"
       
-      # 5. Untransform parameters (always happens)
-      estimated_params <- untransform_parameters(result_params, "constant")
+      estimated_params <- untransform_parameters(final_par_t)
       
-      # Store the final parameters in the optimization result for consistency
+      # Store the final parameters in the optimization result
       optimization_result$final_par <- estimated_params
       
       # Return result with metadata
@@ -429,7 +401,7 @@ estimate_constant_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Run optimization(s) using future package
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Running optimizations...\n")
     opt_start_time <- Sys.time()
   }
@@ -440,7 +412,7 @@ estimate_constant_model <- function(y, K = 3, B = 100, C = 50,
     future.seed = seed
   )
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     opt_end_time <- Sys.time()
     cat("Optimizations completed in", 
         format(difftime(opt_end_time, opt_start_time), digits = 4), "\n")
@@ -463,90 +435,79 @@ estimate_constant_model <- function(y, K = 3, B = 100, C = 50,
   n_converged <- sum(convergence_codes == 0)
   n_failed <- sum(convergence_codes == 999)
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Best result from starting point", best_result$start_idx, "\n")
     cat("Convergence summary:", n_converged, "converged,", 
         n_starts - n_converged - n_failed, "non-convergent,", n_failed, "failed\n")
-    cat("Best negative log-likelihood:", best_result$objective, "\n")
+    cat("Best negative log-likelihood:", sprintf("%.6f", best_result$objective), "\n")
   }
   
   # Extract the best optimization result
   optimization_result <- best_result$result
-  
-  # Get final parameters (already processed through our pipeline above)
   estimated_params <- optimization_result$final_par
   
-  # Extract different parameter components
-  mu_est <- mean_from_par(estimated_params, "constant")
-  sigma2_est <- sigma2_from_par(estimated_params, "constant")
-  trans_prob_est <- transp_from_par(estimated_params, "constant")
-  
   # Calculate model diagnostics
-  # Note: use the original parameter count for AIC/BIC calculation
-  num_params_original <- length(estimated_params)  # Full parameter vector
+  num_params <- length(estimated_params)
   num_data_points <- length(y) - B - C
   
-  aic <- 2 * optimization_result$objective + 2 * num_params_original
-  bic <- 2 * optimization_result$objective + num_params_original * log(num_data_points)
+  aic <- 2 * optimization_result$objective + 2 * num_params
+  bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
-  # Calculate filtered probabilities
-  full_likelihood <- Rfiltering_Const(
-    mu_est, sigma2_est, trans_prob_est, y, B, C
-  )
+  # Calculate filtered probabilities and additional diagnostics
+  full_likelihood_result <- Rfiltering_Const(estimated_params, y, B, C)
   
-  filtered_probs <- attr(full_likelihood, "X.t")
-  transition_matrix <- attr(full_likelihood, "transition_matrix")
-  
-  # Prepare results (same format as original function)
-  results_list <- list(
-    parameters = list(
-      mu = mu_est,
-      sigma2 = sigma2_est,
-      trans_prob = trans_prob_est
-    ),
-    diagnostics = list(
-      loglik = -optimization_result$objective,
-      aic = aic,
-      bic = bic,
-      num_params = num_params_original,
-      num_data_points = num_data_points
-    ),
-    optimization = optimization_result,
-    filtered_probabilities = filtered_probs,
-    transition_matrix = transition_matrix,
-    model_info = list(
-      type = "Constant",
-      K = K,
-      B = B,
-      C = C,
-      equal_variances = equal_variances
-    )
-  )
-  
-  # Add multi-start specific information (only if multiple starts)
-  if (n_starts > 1) {
-    results_list$multistart_info <- list(
-      n_starts = n_starts,
-      parallel_used = parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE),
-      cores_used = cores,
-      best_start_idx = best_result$start_idx,
-      n_converged = n_converged,
-      n_failed = n_failed,
-      all_objectives = sapply(results, function(x) x$objective),
-      convergence_codes = convergence_codes
-    )
+  # Clean up parallel processing
+  if (parallel) {
+    future::plan(future::sequential)
   }
   
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Total estimation time:", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-    cat("AIC:", aic, "BIC:", bic, "\n")
-    cat("Estimated means:", round(mu_est, 4), "\n")
-    cat("Estimated variances:", round(sigma2_est, 4), "\n")
-    if (equal_variances) {
-      cat("Note: All variances constrained to be equal\n")
-    }
+  # Compile final results
+  results_list <- list(
+    parameters = estimated_params,
+    optimization = optimization_result,
+    diagnostics = list(
+      neg_log_likelihood = optimization_result$objective,
+      log_likelihood = -optimization_result$objective,
+      aic = aic,
+      bic = bic,
+      num_parameters = num_params,
+      num_data_points = num_data_points,
+      convergence_code = optimization_result$convergence,
+      n_starts = n_starts,
+      n_converged = n_converged,
+      n_failed = n_failed
+    ),
+    model_info = list(
+      K = K,
+      model_type = "constant",
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      parameterization = "natural"
+    ),
+    data_info = list(
+      n_obs = length(y),
+      burn_in = B,
+      cut_off = C,
+      n_used = num_data_points
+    ),
+    filtered_probabilities = attr(full_likelihood_result, "X.t"),
+    transition_matrix = attr(full_likelihood_result, "transition_matrix"),
+    likelihood_components = list(
+      log_lik_values = attr(full_likelihood_result, "log_lik_values"),
+      total_likelihood = attr(full_likelihood_result, "tot.lik")
+    ),
+    all_results = results  # For detailed diagnostics if needed
+  )
+  
+  # Add convenient parameter extraction
+  results_list$mu_est <- extract_parameter_component(estimated_params, "mu")
+  results_list$sigma2_est <- extract_parameter_component(estimated_params, "sigma2")
+  results_list$trans_prob_est <- extract_parameter_component(estimated_params, "trans_prob")
+  
+  if (verbose >= 1) {
+    cat("\nEstimation completed successfully!\n")
+    cat("Final log-likelihood:", sprintf("%.6f", -optimization_result$objective), "\n")
+    cat("AIC:", sprintf("%.2f", aic), "BIC:", sprintf("%.2f", bic), "\n")
   }
   
   return(results_list)

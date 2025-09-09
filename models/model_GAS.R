@@ -18,140 +18,104 @@ source("models/model_constant.R")
 #'
 #' @param M Number of simulation runs to be performed
 #' @param N Length of the simulation runs (discretized time)
-#' @param mu Vector of true means corresponding to each regime
-#' @param sigma2 Vector of true variances corresponding to each regime
-#' @param init_trans Initial transition probabilities for the latent process
-#' @param A Scale parameter for score updates (sensitivity)
-#' @param B Persistence parameter for score updates (memory)
+#' @param par Parameter vector with attributes (mu, sigma2, init_trans, A, B)
 #' @param burn_in Number of burn-in observations to discard (default: 100)
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
 #' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
 #' @param quad_sample_size Sample size for creating representative data for quadrature setup (default: 1000)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
+#' Automatically detects configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Simulates data from a regime switching model where transition probabilities
 #' are updated using score-driven dynamics based on the predictive likelihood.
 #' The update equation is f[t+1] = omega + A*s[t] + B*(f[t] - omega).
 #' 
 #' This implementation uses proper GAS score scaling following Bazzi et al. (2017)
 #' with Gauss-Hermite quadrature and Moore-Penrose pseudo-inverse scaling.
-#' 
-#' The quadrature setup is based on representative data generated from the regime
-#' parameters, ensuring the integration domain matches the data-generating process.
 #'
 #' @examples
-#' # Generate data for a 3-regime model
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' init_trans_true <- rep(0.2, 6)  # Off-diagonal elements for a 3x3 matrix
-#' A_true <- rep(0.1, 6)  # Score scaling parameters
-#' B_true <- rep(0.9, 6)  # Persistence parameters
-#' data_sim <- dataGASCD(10, 1000, mu_true, sigma2_true, init_trans_true, A_true, B_true)
-dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
-                      n_nodes = 30, scaling_method = "simple", quad_sample_size = 1000) {
-  # Parameters:
-  # M                 Number of simulation runs to be performed
-  # N                 Length of the simulation runs (discretized time)
-  # mu                Vector of true means corresponding to each regime
-  # sigma2            Vector of true variances corresponding to each regime
-  # init_trans        Initial transition probabilities for the latent process
-  # A                 Scaling parameters for score updates (sensitivity)
-  # B                 Persistence parameters for score updates (memory)
-  # burn_in           Number of burn-in observations to discard
-  # n_nodes           Number of Gauss-Hermite quadrature nodes
-  # scaling_method    Score scaling method to use
-  # quad_sample_size  Sample size for quadrature setup
+#' # Generate data using diagonal parameterization
+#' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)  # mu, sigma2, p11, p22, A, B
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas", 
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
+#' data_sim <- dataGASCD(10, 1000, par_diag)
+dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30, 
+                      scaling_method = "simple", quad_sample_size = 1000) {
   
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
+  # Validate parameter vector and extract configuration
+  validate_parameter_attributes(par)
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  init_trans <- extract_parameter_component(par, "trans_prob")
+  A <- extract_parameter_component(par, "A")
+  B <- extract_parameter_component(par, "B")
+  
+  # Handle equal variances: expand single variance to K variances for simulation
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
   }
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
+  # Determine the number of transition parameters based on parameterization
+  n_transition <- length(init_trans)
   
-  # Ensure we have the right number of parameters
-  if (length(init_trans) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(init_trans)))
-  }
-  if (length(A) != n_transition) {
-    stop(sprintf("Error: Expected %d A parameters for %d regimes, got %d.", 
-                 n_transition, K, length(A)))
-  }
-  if (length(B) != n_transition) {
-    stop(sprintf("Error: Expected %d B parameters for %d regimes, got %d.", 
-                 n_transition, K, length(B)))
-  }
+  # Generate representative data for quadrature setup (using expanded parameters)
+  representative_data <- c(rnorm(quad_sample_size, mean(mu), sqrt(mean(sigma2))))
   
-  # Validate scaling method
-  scaling_method <- match.arg(scaling_method, c("moore_penrose", "simple", "normalized", "original"))
-  
-  # Setup Gauss-Hermite quadrature based on regime parameters
-  # Create representative data from regime parameters for quadrature setup
-  tryCatch({
-    # Generate sample sizes for each regime (equal weighting)
-    regime_weights <- rep(1/K, K)
-    sample_sizes <- round(quad_sample_size * regime_weights)
-    
-    # Ensure we have at least some samples for each regime
-    sample_sizes <- pmax(sample_sizes, 50)
-    
-    # Generate representative data from each regime
-    typical_data <- c()
-    for (k in 1:K) {
-      regime_data <- rnorm(sample_sizes[k], mu[k], sqrt(sigma2[k]))
-      typical_data <- c(typical_data, regime_data)
-    }
-    
-    # Setup quadrature based on this representative data
-    gh_setup <- setup_gauss_hermite_quadrature(typical_data, n_nodes = n_nodes, method = "data_based")
-    
-  }, error = function(e) {
-    warning("Failed to setup quadrature with regime parameters. Using standardized setup: ", e$message)
-    # Fallback to standardized setup
-    gh_setup <<- setup_gauss_hermite_quadrature(rnorm(quad_sample_size), n_nodes = n_nodes, method = "standardized")
-  })
+  # Setup Gauss-Hermite quadrature for score calculation
+  gh_setup <- setup_gauss_hermite_quadrature(
+    y = representative_data,
+    n_nodes = n_nodes,
+    method = "data_based"
+  )
   
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
   
-  # Get baseline transition probabilities that are logit-transformed
+  # Get baseline transition probabilities for omega calculation
   omega <- logit(init_trans)
   
   for (i in 1:M) {
     # Initialize all data structures including burn-in period
     total_length <- N + burn_in
+    eta <- matrix(0, nrow=K, ncol=total_length)     # Likelihood of each regime
+    tot_lik <- numeric(total_length)                # Total likelihood
+    X_t <- matrix(0, nrow=K, ncol=total_length)     # Filtered probabilities after observation
+    X_tlag <- matrix(0, nrow=K, ncol=total_length)  # Predicted probabilities before observation
+    S <- numeric(total_length)                      # Latent state
+    y.sim <- numeric(total_length)                  # Random increments according to state
     
-    # Arrays for storing various quantities throughout the simulation
-    eta <- matrix(0, nrow=K, ncol=total_length)      # Likelihood of each regime
-    tot_lik <- numeric(total_length)                 # Total likelihood
-    X_t <- matrix(0, nrow=K, ncol=total_length)      # Filtered probabilities after observation
-    X_tlag <- matrix(0, nrow=K, ncol=total_length)   # Predicted probabilities before observation
-    S <- numeric(total_length)                       # Latent state
-    y.sim <- numeric(total_length)                   # Random increments according to state
-    
-    # Arrays for score-driven dynamics
-    f <- matrix(0, nrow=n_transition, ncol=total_length)       # Time-varying parameters (logit scale)
-    p_trans <- matrix(0, nrow=n_transition, ncol=total_length) # Transition probabilities
-    score_scaled <- matrix(0, nrow=n_transition, ncol=total_length) # Scaled score vectors
-    
-    # For debugging and diagnostics
+    # Initialize GAS-specific variables
+    f <- matrix(0, nrow=n_transition, ncol=total_length)
+    p_trans <- matrix(0, nrow=n_transition, ncol=total_length)
+    score_scaled <- matrix(0, nrow=n_transition, ncol=total_length)
     fisher_info_series <- numeric(total_length)
     score_norms <- numeric(total_length)
     
     # Initial state probabilities (uniform distribution)
     X_t[,1] <- rep(1/K, K)
     
-    # Set initial values for transition parameters
+    # Set initial f values
     f[,1] <- omega
     p_trans_raw <- logistic(f[,1])
-    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
+    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+    
+    # Initialize score as zero
+    score_scaled[,1] <- 0
+    
+    # Track zero scores for diagnostics
+    zero_score_count <- 0
     
     for (t in 1:(total_length-1)) {
-      # Generate predicted probabilities using current transition probabilities
-      Pmatrix <- transition_matrix(p_trans[,t], check_validity = FALSE)
+      # Generate predicted probabilities
+      Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
       X_tlag[,t] <- Pmatrix %*% X_t[,t]
       
       # Sample a state based on the predicted probabilities and 
@@ -159,94 +123,47 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
       S[t] <- sample(1:K, 1, prob=X_tlag[,t])
       y.sim[t] <- rnorm(1, mu[S[t]], sqrt(sigma2[S[t]]))
       
-      # Calculate likelihoods for each regime
+      # Calculate likelihoods
       for (k in 1:K) {
         eta[k,t] <- dnorm(y.sim[t], mu[k], sqrt(sigma2[k]))
       }
       tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
       
       # Calculate filtered probabilities
-      if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
-        # Handle numerical issues with warning
-        warning(paste("Invalid total likelihood", tot_lik[t], "at time", t, 
-                      "in simulation", i, "- resetting to uniform probabilities and zero scores"))
-        tot_lik[t] <- .Machine$double.eps
-        X_t[,t+1] <- rep(1/K, K)
-        score_scaled[,t] <- rep(0, n_transition)
-        fisher_info_series[t] <- NA
-        score_norms[t] <- 0
-      } else {
-        X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-        
-        # Calculate properly scaled score using our new helper functions
-        tryCatch({
-          # Normalize probabilities to ensure they sum to 1 (fix numerical precision issues)
-          X_tlag_sum <- sum(X_tlag[,t])
-          if (X_tlag_sum <= 0 || !is.finite(X_tlag_sum)) {
-            # Fallback to uniform distribution if X_tlag is invalid
-            warning(paste("Invalid X_tlag probabilities at time", t, "in simulation", i,
-                          "with sum =", X_tlag_sum, ". Using uniform fallback."))
-            X_tlag_normalized <- rep(1/K, K)
-          } else {
-            X_tlag_normalized <- X_tlag[,t] / X_tlag_sum
-          }
-          
-          # Also ensure X_t probabilities are valid
-          X_t_sum <- sum(X_t[,t])
-          if (X_t_sum <= 0 || !is.finite(X_t_sum)) {
-            warning(paste("Invalid X_t probabilities at time", t, "in simulation", i,
-                          "with sum =", X_t_sum, ". Using uniform fallback."))
-            X_t_normalized <- rep(1/K, K)
-          } else {
-            X_t_normalized <- X_t[,t] / X_t_sum
-          }
-          
-          # Use proper GAS score calculation from helpers
-          scaled_score_t <- calculate_gas_score(
-            y_t = y.sim[t],
-            mu = mu,
-            sigma2 = sigma2,
-            X_t_lag = X_tlag_normalized,  # Use normalized version
-            X_t_prev = X_t_normalized,   # Use normalized version
-            p_trans = p_trans[,t],
-            gh_setup = gh_setup,
-            K = K,
-            scaling_method = scaling_method
-          )
-          
-          score_scaled[,t] <- scaled_score_t
-          
-          # Extract diagnostics if available
-          calc_info <- attr(scaled_score_t, "calculation_info")
-          if (!is.null(calc_info)) {
-            fisher_info_series[t] <- calc_info$fisher_info
-            score_norms[t] <- calc_info$scaled_score_norm
-          } else {
-            fisher_info_series[t] <- NA
-            score_norms[t] <- sqrt(sum(scaled_score_t^2))
-          }
-          
-        }, error = function(e) {
-          # Fallback to zero score if calculation fails - with warning
-          warning(paste("GAS score calculation failed at time", t, "in simulation", i, 
-                        "- using zero scores. Error:", e$message))
-          score_scaled[,t] <<- rep(0, n_transition)
-          fisher_info_series[t] <<- NA
-          score_norms[t] <<- 0
-        })
+      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
+      
+      # Calculate GAS score for time t
+      score_result <- calculate_gas_score(
+        y_obs = y.sim[t],
+        mu = mu,
+        sigma2 = sigma2,
+        trans_prob = p_trans[,t],
+        diag_probs = diag_probs,
+        X_pred = X_tlag[,t],
+        gh_setup = gh_setup,
+        scaling_method = scaling_method
+      )
+      
+      # Store score and diagnostics
+      score_scaled[,t+1] <- score_result$scaled_score
+      fisher_info_series[t] <- score_result$fisher_info
+      score_norms[t] <- sqrt(sum(score_result$raw_score^2))
+      
+      # Count zero scores for diagnostics
+      if (all(abs(score_result$scaled_score) < 1e-10)) {
+        zero_score_count <- zero_score_count + 1
       }
       
-      # Update transition parameters using the score-driven dynamics
-      # f_{t+1} = ω + A*s_t + B*(f_t - ω)
-      f[,t+1] <- omega + A * score_scaled[,t] + B * (f[,t] - omega)
+      # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
+      f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
       
-      # Transform back to probability space
+      # Convert f to transition probabilities
       p_trans_raw <- logistic(f[,t+1])
-      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, K)
+      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     }
     
     # For the last time point
-    Pmatrix <- transition_matrix(p_trans[,total_length-1], check_validity = FALSE)
+    Pmatrix <- transition_matrix(p_trans[,total_length-1], diag_probs = diag_probs, check_validity = FALSE)
     X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
     S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
     y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
@@ -254,23 +171,11 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
     # Remove burn-in and save the simulation run in the data matrix
     data[i,] <- y.sim[(burn_in+1):total_length]
     
-    # Check for excessive zero scores and warn if problematic
-    zero_score_count <- sum(apply(score_scaled[, 1:(total_length-1)], 2, function(x) all(x == 0)))
-    if (zero_score_count > (total_length-1) * 0.1) {  # Warn if >10% zero scores
+    # Optional warning about excessive zero scores
+    if (zero_score_count > 0.5 * (total_length - 1)) {
       warning(paste("Simulation", i, "used zero scores for", zero_score_count, 
                     "out of", total_length-1, "time points (", 
                     round(100*zero_score_count/(total_length-1), 1), "%)"))
-    }
-    
-    # Optional: Store additional simulation diagnostics for debugging
-    if (getOption("store_gas_simulation_details", FALSE)) {
-      attr(data, paste0("sim_", i, "_diagnostics")) <- list(
-        S = S[(burn_in+1):total_length],
-        X_t = X_t[, (burn_in+1):total_length],
-        p_trans = p_trans[, (burn_in+1):total_length],
-        fisher_info = fisher_info_series[(burn_in+1):total_length],
-        score_norms = score_norms[(burn_in+1):total_length]
-      )
     }
   }
   
@@ -280,6 +185,8 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
     N = N,
     K = K,
     burn_in = burn_in,
+    diag_probs = diag_probs,
+    equal_variances = equal_variances,
     parameters = list(
       mu = mu,
       sigma2 = sigma2,
@@ -300,11 +207,7 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
 
 #' Filter observed data through the score-driven (GAS) regime-switching model
 #'
-#' @param mu Vector of means corresponding to each regime
-#' @param sigma2 Vector of variances corresponding to each regime
-#' @param init_trans Initial transition probabilities for the latent process
-#' @param A Scale parameter for score updates (sensitivity)
-#' @param B Persistence parameter for score updates (memory)
+#' @param par Parameter vector with attributes (mu, sigma2, init_trans, A, B)
 #' @param y Observed time series increments
 #' @param B_burnin Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
@@ -312,28 +215,51 @@ dataGASCD <- function(M, N, mu, sigma2, init_trans, A, B, burn_in = 100,
 #' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
+#' @param diagnostics If TRUE, include detailed diagnostic information (default: FALSE)
 #' @param verbose Whether to report fallback usage (default: FALSE)
 #' @return Negative log-likelihood of observed data under the model
 #' @details
+#' Automatically reads configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Filters observed data through the model to compute the likelihood using proper
 #' GAS score scaling following Bazzi et al. (2017). When use_fallback=TRUE,
 #' automatically falls back to constant transition probability model when A parameters
 #' are effectively zero, providing both speed improvements and numerical stability.
-#'
-#' Returns the negative log-likelihood for compatibility with optimization functions.
+#' 
+#' The diagnostics parameter controls whether detailed information is attached
+#' as attributes (expensive during optimization, useful for final results).
 #'
 #' @examples
-#' # Calculate likelihood for a 3-regime model
-#' mu <- c(-2, 1, 2)
-#' sigma2 <- c(0.02, 0.2, 0.6)
-#' init_trans <- rep(0.2, 6)
-#' A <- c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1)
-#' B <- c(0.9, 0.9, 0.9, 0.9, 0.9, 0.9)
+#' # Filter data using diagonal parameterization
+#' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
 #' y <- rnorm(1000)
-#' loglik <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, 100, 50)
-Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C, 
-                           n_nodes = 30, scaling_method = "simple",
-                           use_fallback = TRUE, A_threshold = 1e-4, verbose = FALSE) {
+#' loglik <- Rfiltering_GAS(par_diag, y, 100, 50)
+Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "simple",
+                           use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
+  
+  # Only validate if diagnostics are enabled (performance optimization)
+  if (diagnostics) {
+    validate_parameter_attributes(par)
+  }
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  init_trans <- extract_parameter_component(par, "trans_prob")
+  A <- extract_parameter_component(par, "A")
+  B <- extract_parameter_component(par, "B")
+  
+  # Handle equal variances: expand single variance to K variances for filtering
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
+  }
   
   # Check fallback condition if enabled
   if (use_fallback) {
@@ -345,24 +271,34 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
         cat("Using constant model fallback (max|A| =", round(max_A, 6), "< threshold =", A_threshold, ")\n")
       }
       
-      # Use fast constant model filtering
-      result <- Rfiltering_Const(mu, sigma2, init_trans, y, B_burnin, C)
-      
-      # Add attributes to match GAS output format
-      attr(result, "model_type") <- "constant_fallback"
-      attr(result, "max_A") <- max_A
-      attr(result, "A_threshold") <- A_threshold
-      
-      # Create dummy GAS-specific attributes for compatibility
-      attr(result, "score_scaled") <- matrix(0, nrow = length(A), ncol = length(y))
-      attr(result, "f") <- matrix(logit(init_trans), nrow = length(A), ncol = length(y))
-      attr(result, "gas_diagnostics") <- list(
-        model_type = "constant_fallback",
-        max_A = max_A,
-        zero_score_percentage = 100,
-        mean_fisher_info = NA,
-        mean_score_norm = 0
+      # Create constant model parameter vector with proper attributes
+      const_par <- c(mu, sigma2, init_trans)
+      const_par <- set_parameter_attributes(
+        par = const_par,
+        K = K,
+        model_type = "constant",
+        diag_probs = diag_probs,
+        equal_variances = equal_variances
       )
+      
+      # Use fast constant model filtering
+      result <- Rfiltering_Const(const_par, y, B_burnin, C, diagnostics = diagnostics)
+      
+      # Add GAS-specific attributes if diagnostics enabled
+      if (diagnostics) {
+        attr(result, "model_type") <- "constant_fallback"
+        attr(result, "max_A") <- max_A
+        attr(result, "A_threshold") <- A_threshold
+        attr(result, "score_scaled") <- matrix(0, nrow = length(A), ncol = length(y))
+        attr(result, "f") <- matrix(logit(init_trans), nrow = length(A), ncol = length(y))
+        attr(result, "gas_diagnostics") <- list(
+          model_type = "constant_fallback",
+          max_A = max_A,
+          zero_score_percentage = 100,
+          mean_fisher_info = NA,
+          mean_score_norm = 0
+        )
+      }
       
       return(result)
     }
@@ -371,376 +307,317 @@ Rfiltering_GAS <- function(mu, sigma2, init_trans, A, B, y, B_burnin, C,
       cat("Using full GAS model (max|A| =", round(max_A, 6), ">= threshold =", A_threshold, ")\n")
     }
   }
-
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
-  }
   
-  # Determine length of the time series
+  # Full GAS model implementation
   M <- length(y)
+  n_transition <- length(init_trans)
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
-  
-  # Ensure we have the right number of parameters
-  if (length(init_trans) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(init_trans)))
-  }
-  if (length(A) != n_transition) {
-    stop(sprintf("Error: Expected %d A parameters for %d regimes, got %d.", 
-                 n_transition, K, length(A)))
-  }
-  if (length(B) != n_transition) {
-    stop(sprintf("Error: Expected %d B parameters for %d regimes, got %d.", 
-                 n_transition, K, length(B)))
-  }
-  
-  # Convert to valid probabilities and create transition matrix
-  p_trans <- convert_to_valid_probs(init_trans, K)
-  
-  # Set up Gauss-Hermite quadrature for score scaling
-  gh_setup <- setup_gauss_hermite_quadrature(y, n_nodes)
-  
-  # Initialize storage for filtered probabilities and other outputs
-  X_t <- matrix(0, K, M)
-  X_tlag <- matrix(0, K, M)
-  p_trans_series <- matrix(0, n_transition, M)
-  f_series <- matrix(0, n_transition, M)
-  score_scaled_series <- matrix(0, n_transition, M)
-  
-  # Initialize transition parameters in logit space
-  f_t <- logit(init_trans)
-  omega <- logit(init_trans)  # Long-run mean
-  
-  # Storage for GAS diagnostics
-  fisher_info_series <- numeric(M)
-  score_norms <- numeric(M)
-  zero_score_count <- 0
-  
-  # Calculate log-likelihood
-  logLik <- numeric(M)
-  
-  for (t in 1:M) {
-    # Current transition probabilities
-    current_trans <- logistic(f_t)
-    p_trans_series[, t] <- current_trans
-    f_series[, t] <- f_t
-    
-    # Create transition matrix and calculate predicted probabilities
-    if (t == 1) {
-      # Initial probabilities
-      Pmatrix <- transition_matrix(current_trans, check_validity = FALSE)
-      X_tlag[, t] <- solve(diag(K) - Pmatrix + matrix(1, K, K)) %*% rep(1, K)
-    } else {
-      Pmatrix <- transition_matrix(current_trans, check_validity = FALSE)
-      X_tlag[, t] <- Pmatrix %*% X_t[, t-1]
-    }
-    
-    # Always normalize, but warn if error is suspiciously large
-    X_tlag_sum <- sum(X_tlag[, t])
-    if (abs(X_tlag_sum - 1) > 0.1) {  # Warn if error > 10%
-      warning(paste("Large probability normalization at time", t, 
-                    "- sum was", round(X_tlag_sum, 4), "instead of 1.0"))
-    }
-    X_tlag[, t] <- X_tlag[, t] / X_tlag_sum
-    
-    # Calculate regime likelihoods
-    eta <- numeric(K)
-    for (k in 1:K) {
-      eta[k] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
-    }
-    
-    # Calculate total likelihood and filtered probabilities
-    tot_lik <- sum(eta * X_tlag[, t])
-    logLik[t] <- log(tot_lik)
-    
-    X_t[, t] <- (eta * X_tlag[, t]) / tot_lik
-    
-    # Always normalize, but warn if error is suspiciously large
-    X_t_sum <- sum(X_t[, t])
-    if (abs(X_t_sum - 1) > 0.01) {  # Warn if error > 1%
-      warning(paste("Large X_t probability normalization at time", t, 
-                    "- sum was", round(X_t_sum, 4), "instead of 1.0"))
-    }
-    # Always normalize
-    X_t[, t] <- X_t[, t] / X_t_sum
-    
-    # Calculate scaled score for updating f
-    if (t < M) {  # Don't update after last observation
-      score_scaled <- calculate_gas_score(
-        y[t], mu, sigma2, X_tlag[, t], 
-        if (t == 1) X_tlag[, t] else X_t[, t-1],
-        current_trans, gh_setup, K, scaling_method
-      )
-      
-      score_scaled_series[, t] <- score_scaled
-      
-      # Store diagnostics - safely handle missing attributes
-      fisher_attr <- attr(score_scaled, "fisher_info")
-      if (!is.null(fisher_attr) && length(fisher_attr) > 0) {
-        fisher_info_series[t] <- fisher_attr
-      } else {
-        fisher_info_series[t] <- 1.0  # Default fallback value
-      }
-      
-      if (all(abs(score_scaled) < .Machine$double.eps)) {
-        zero_score_count <- zero_score_count + 1
-      }
-      
-      # Update f using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
-      f_t <- omega + A * score_scaled + B * (f_t - omega)
-    }
-  }
-  
-  # Calculate final likelihood excluding burn-in and cut-off
-  valid_indices <- (B_burnin + 1):(M - C)
-  if (length(valid_indices) <= 0) {
-    stop("Error: No valid time points remain after burn-in and cut-off.")
-  }
-  
-  logLikSum <- sum(logLik[valid_indices])
-  
-  # Return negative sum of log-likelihoods (for minimizing)
-  res <- -logLikSum
-  
-  # Store additional information as attributes
-  attr(res, "X.t") <- t(X_t)
-  attr(res, "X.tlag") <- t(X_tlag)
-  attr(res, "p_trans") <- t(p_trans_series)
-  attr(res, "f") <- t(f_series)
-  attr(res, "score_scaled") <- t(score_scaled_series)
-  
-  # Add model type information
-  attr(res, "model_type") <- "full_gas"
-  if (use_fallback) {
-    attr(res, "max_A") <- max(abs(A))
-    attr(res, "A_threshold") <- A_threshold
-  }
-  
-  # GAS-specific diagnostics
-  valid_diag_indices <- intersect(1:(M-1), valid_indices)
-  attr(res, "gas_diagnostics") <- list(
-    model_type = "full_gas",
-    zero_score_percentage = 100 * zero_score_count / length(valid_diag_indices),
-    mean_fisher_info = mean(fisher_info_series[valid_diag_indices], na.rm = TRUE),
-    mean_score_norm = mean(score_norms[valid_diag_indices], na.rm = TRUE)
+  # Setup Gauss-Hermite quadrature for score calculation
+  gh_setup <- setup_gauss_hermite_quadrature(
+    y = y,
+    n_nodes = n_nodes,
+    method = "data_based"
   )
   
-  return(res)
+  # Initialize variables
+  eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
+  tot_lik <- numeric(M)                # Total likelihood
+  X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
+  X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
+  
+  # Initialize GAS-specific variables
+  f <- matrix(0, nrow=n_transition, ncol=M)
+  p_trans <- matrix(0, nrow=n_transition, ncol=M)
+  score_scaled <- matrix(0, nrow=n_transition, ncol=M)
+  fisher_info_series <- numeric(M)
+  score_norms <- numeric(M)
+  
+  # Get baseline transition probabilities for omega calculation
+  omega <- logit(init_trans)
+  
+  # Set initial f values
+  f[,1] <- omega
+  p_trans_raw <- logistic(f[,1])
+  p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+  
+  # Initial state probabilities (using stationary distribution)
+  initial_probs <- tryCatch({
+    stat_dist(p_trans[,1], diag_probs = diag_probs)
+  }, error = function(e) {
+    rep(1/K, K)  # Fallback to uniform
+  })
+  X_t[,1] <- initial_probs
+  
+  # Initialize score as zero
+  score_scaled[,1] <- 0
+  
+  # Track zero scores for diagnostics
+  zero_score_count <- 0
+  
+  for (t in 1:(M-1)) {
+    # Generate predicted probabilities
+    Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
+    X_tlag[,t] <- Pmatrix %*% X_t[,t]
+    
+    # Calculate likelihoods
+    for (k in 1:K) {
+      eta[k,t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
+    }
+    tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
+    
+    # Protect against numerical issues
+    if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
+      tot_lik[t] <- .Machine$double.eps
+      X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
+    } else {
+      # Calculate filtered probabilities
+      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
+    }
+    
+    # Calculate GAS score for time t
+    score_result <- calculate_gas_score(
+      y_obs = y[t],
+      mu = mu,
+      sigma2 = sigma2,
+      trans_prob = p_trans[,t],
+      diag_probs = diag_probs,
+      X_pred = X_tlag[,t],
+      gh_setup = gh_setup,
+      scaling_method = scaling_method
+    )
+    
+    # Store score and diagnostics
+    score_scaled[,t+1] <- score_result$scaled_score
+    fisher_info_series[t] <- score_result$fisher_info
+    score_norms[t] <- sqrt(sum(score_result$raw_score^2))
+    
+    # Count zero scores for diagnostics
+    if (all(abs(score_result$scaled_score) < 1e-10)) {
+      zero_score_count <- zero_score_count + 1
+    }
+    
+    # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
+    f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
+    
+    # Convert f to transition probabilities
+    p_trans_raw <- logistic(f[,t+1])
+    p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+  }
+  
+  # Calculate likelihood for the last time point
+  Pmatrix <- transition_matrix(p_trans[,M-1], diag_probs = diag_probs, check_validity = FALSE)
+  X_tlag[,M] <- Pmatrix %*% X_t[,M-1]
+  for (k in 1:K) {
+    eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
+  }
+  tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
+  
+  # Protect against numerical issues
+  if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
+    tot_lik[M] <- .Machine$double.eps
+  }
+  
+  # Sum log-likelihoods, but exclude burn-in and cut-off
+  valid_indices <- (B_burnin+1):(M-C)
+  if (length(valid_indices) <= 0) {
+    stop("Error: No valid data points after applying burn-in and cut-off.")
+  }
+  
+  log_lik_values <- log(tot_lik[valid_indices])
+  
+  # Handle any remaining invalid values
+  log_lik_values[!is.finite(log_lik_values)] <- log(.Machine$double.eps)
+  
+  # Calculate total negative log-likelihood
+  neg_log_lik <- -sum(log_lik_values)
+  
+  # Store additional information as attributes for diagnostics (if requested)
+  if (diagnostics) {
+    attr(neg_log_lik, "X.t") <- X_t
+    attr(neg_log_lik, "X.tlag") <- X_tlag
+    attr(neg_log_lik, "eta") <- eta
+    attr(neg_log_lik, "tot.lik") <- tot_lik
+    attr(neg_log_lik, "f") <- f
+    attr(neg_log_lik, "p_trans") <- p_trans
+    attr(neg_log_lik, "score_scaled") <- score_scaled
+    attr(neg_log_lik, "log_lik_values") <- log_lik_values
+    attr(neg_log_lik, "valid_indices") <- valid_indices
+    attr(neg_log_lik, "model_info") <- list(
+      K = K,
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      model_type = "gas",
+      n_transition = n_transition
+    )
+    
+    # GAS-specific diagnostics
+    valid_diag_indices <- intersect(1:(M-1), valid_indices)
+    attr(neg_log_lik, "gas_diagnostics") <- list(
+      model_type = "full_gas",
+      zero_score_percentage = 100 * zero_score_count / length(valid_diag_indices),
+      mean_fisher_info = mean(fisher_info_series[valid_diag_indices], na.rm = TRUE),
+      mean_score_norm = mean(score_norms[valid_diag_indices], na.rm = TRUE)
+    )
+  }
+  
+  return(neg_log_lik)
 }
 
-#' Estimate parameters for the score-driven (GAS) regime-switching model
+#' Estimate GAS regime-switching model
 #'
-#' @param y Observed time series
+#' @param y Observed time series data
 #' @param K Number of regimes
-#' @param B_burnin Burn-in period to exclude from likelihood calculation
-#' @param C Cut-off period to exclude from likelihood calculation
-#' @param initial_params Initial parameter guesses (optional, only used when n_starts=1)
-#' @param bounds Parameter bounds for optimization (optional)
+#' @param diag_probs If TRUE, use diagonal transition probability parameterization
+#' @param equal_variances If TRUE, constrain all regimes to have equal variances
+#' @param n_starts Number of random starting points for optimization (default: 10)
+#' @param B_burnin Burn-in observations to exclude (default: 100)
+#' @param C Cut-off observations to exclude (default: 50)
+#' @param bounds Optional list with lower and upper parameter bounds
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
 #' @param scaling_method Score scaling method (default: "simple")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
-#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
-#' @param n_starts Number of starting points for optimization (default: 1)
-#' @param parallel Whether to run multiple starts in parallel (default: FALSE)
-#' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
-#' @param seed Random seed for starting point generation (optional)
-#' @param verbose Whether to print progress information (default: TRUE)
-#' @return List with estimated parameters and model diagnostics
+#' @param parallel Enable parallel processing for multiple starts (default: TRUE)
+#' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
+#' @param seed Random seed for reproducibility (optional)
+#' @param verbose Verbosity level (0=silent, 1=basic, 2=detailed)
+#' @return List with estimation results including parameters, diagnostics, and metadata
 #' @details
-#' Estimates model parameters using maximum likelihood estimation.
-#' When n_starts > 1, generates multiple diverse starting points and runs
-#' optimization in parallel (if parallel=TRUE) to improve robustness against
-#' local optima. Returns the result with the highest likelihood.
-#' 
-#' When use_fallback=TRUE, automatically falls back to constant transition 
-#' probability model when A parameters are effectively zero, providing both 
-#' speed improvements and numerical stability.
-#' 
-#' When equal_variances=TRUE, constrains all regime variances to be equal,
-#' reducing the number of parameters by K-1. This can improve numerical
-#' stability and may be preferred when regime differences are primarily
-#' in means rather than variances.
-#' 
-#' Uses the future package for cross-platform parallel processing that works
-#' on Windows, macOS, and Linux. The output format is identical regardless 
-#' of single or multi-start estimation.
+#' UPDATED to support both diagonal and off-diagonal transition probability parameterizations
+#' using the new attribute-based parameter system. This enables exact validation against
+#' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
-#' # Single start (current behavior)
-#' results <- estimate_gas_model(data, K=3)
+#' # Estimate model with diagonal probabilities
+#' y <- rnorm(1000)
+#' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=5)
 #' 
-#' # Multi-start with parallel processing
-#' results <- estimate_gas_model(data, K=3, n_starts=10, parallel=TRUE)
-#' 
-#' # Multi-start sequential (for debugging)
-#' results <- estimate_gas_model(data, K=3, n_starts=5, parallel=FALSE)
-#' 
-#' # Multi-start without fallback
-#' results <- estimate_gas_model(data, K=3, n_starts=10, parallel=TRUE, use_fallback=FALSE)
-#' 
-#' # With equal variances constraint
-#' results <- estimate_gas_model(data, K=3, equal_variances=TRUE)
-#' 
-#' # Combined: equal variances with multi-start
-#' results <- estimate_gas_model(data, K=3, equal_variances=TRUE, n_starts=5, parallel=TRUE)
-estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50, 
-                               initial_params = NULL, bounds = NULL,
-                               n_nodes = 30, scaling_method = "simple",
+#' # Estimate model with off-diagonal probabilities
+#' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
+estimate_gas_model <- function(y, K, diag_probs = FALSE, equal_variances = FALSE,
+                               n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,
+                               n_nodes = 30, scaling_method = "simple", 
                                use_fallback = TRUE, A_threshold = 1e-4,
-                               equal_variances = FALSE,
-                               n_starts = 1, parallel = FALSE, cores = NULL,
-                               seed = NULL, verbose = TRUE) {
+                               parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
-  # Set up cores (don't use more cores than starts)
-  if (is.null(cores)) {
-    cores <- max(1, parallel::detectCores() - 1)
+  # Input validation
+  if (!is.numeric(y) || length(y) == 0) {
+    stop("y must be a non-empty numeric vector")
   }
-  cores <- min(cores, n_starts)
-  
-  if (verbose) {
-    cat("Estimating GAS model with", K, "regimes")
-    if (use_fallback) {
-      cat(" (fallback enabled, A threshold =", A_threshold, ")")
-    }
-    cat("\n")
-    
-    if (n_starts > 1) {
-      cat("Using", n_starts, "starting points")
-      if (parallel) {
-        cat(" with", cores, "cores in parallel\n")
-      } else {
-        cat(" sequentially\n")
-      }
-    } else {
-      cat("Using single starting point\n")
-    }
-    start_time <- Sys.time()
+  if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
+    stop("K must be an integer >= 2")
+  }
+  if (length(y) <= B_burnin + C + K) {
+    stop("Time series too short for specified burn-in and cut-off")
   }
   
-  # Set up parallel processing plan
-  if (parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE)) {
+  # Setup parallel processing
+  if (parallel) {
+    if (is.null(cores)) {
+      cores <- min(n_starts, future::availableCores() - 1, 4)  # Reasonable default
+    }
     future::plan(future::multisession, workers = cores)
-    on.exit(future::plan(future::sequential), add = TRUE)  # Cleanup
-    if (verbose) {
-      cat("Parallel processing enabled with future package\n")
-    }
   } else {
     future::plan(future::sequential)
-    if (parallel && n_starts > 1) {
-      warning("future.apply package not available, running sequentially")
-    }
   }
   
-  # Generate starting points
-  if (n_starts == 1 && !is.null(initial_params)) {
-    # Use user-provided starting point
-    starting_points <- list(initial_params)
-    if (verbose) {
-      cat("Using provided initial parameters\n")
-    }
-  } else {
-    # Generate diverse starting points
-    if (verbose && n_starts > 1) {
-      cat("Generating", n_starts, "diverse starting points...\n")
-    }
-    starting_points <- generate_starting_points(y, K, "gas", n_starts, seed)
+  if (verbose >= 1) {
+    cat("Estimating GAS (score-driven) regime-switching model\n")
+    cat("==================================================\n")
+    cat("K:", K, "regimes\n")
+    cat("Data points:", length(y), "(using", length(y) - B_burnin - C, "after burn-in/cut-off)\n")
+    cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
+    cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
+    cat("Starting points:", n_starts, "\n")
+    cat("GAS settings: scaling_method =", scaling_method, ", n_nodes =", n_nodes, "\n")
+    cat("Fallback enabled:", use_fallback, "(threshold =", A_threshold, ")\n")
+    if (parallel) cat("Parallel processing:", cores, "cores\n")
+    cat("\n")
   }
   
-  # Create default bounds if none provided
+  # Generate diverse starting points using updated function
+  if (verbose >= 1) cat("Generating starting points...\n")
+  starting_points <- generate_starting_points(
+    y = y,
+    K = K,
+    model_type = "gas",
+    n_starts = n_starts,
+    diag_probs = diag_probs,
+    equal_variances = equal_variances,
+    seed = seed
+  )
+  
+  # Create parameter bounds if none provided
   if (is.null(bounds)) {
-    n_transition <- K * (K - 1)
-    lower_bounds <- c(rep(-Inf, K),               # No bounds on means
-                      rep(-Inf, K),               # Variance >= 0 (log-transformed)
-                      rep(-Inf, n_transition),    # Probabilities >= 0 (logit-transformed)
-                      rep(-Inf, n_transition),    # A-coefficients >= 0 (logit-transformed)
-                      rep(-Inf, n_transition))    # B-coefficients >= 0 (logit-transformed)
+    # Calculate expected parameter count
+    expected_length <- calculate_expected_length(K, "gas", diag_probs, equal_variances)
     
-    upper_bounds <- c(rep(Inf, K),                # No bounds on means
-                      rep(Inf, K),                # Variance unbounded
-                      rep(Inf, n_transition),     # Probabilities <= 1 (logit-transformed)
-                      rep(Inf, n_transition),     # A-coefficients <= 1 (logit-transformed)
-                      rep(Inf, n_transition))     # B-coefficients <= 1 (logit-transformed)
+    # Create default bounds for transformed parameters
+    n_mu <- K
+    n_sigma2 <- ifelse(equal_variances, 1, K)
+    n_trans <- ifelse(diag_probs, K, K*(K-1))
+    n_A <- n_trans  # A coefficients match transition structure
+    n_B <- n_trans  # B coefficients match transition structure
+    
+    lower_bounds <- c(rep(-Inf, n_mu),      # No bounds on means
+                      rep(-Inf, n_sigma2),  # Log-variances
+                      rep(-Inf, n_trans),   # Logit-probabilities  
+                      rep(-Inf, n_A),       # Logit-A coefficients
+                      rep(-Inf, n_B))       # Logit-B coefficients
+    
+    upper_bounds <- c(rep(Inf, n_mu),       # No bounds on means
+                      rep(Inf, n_sigma2),   # Log-variances
+                      rep(Inf, n_trans),    # Logit-probabilities
+                      rep(Inf, n_A),        # Logit-A coefficients
+                      rep(Inf, n_B))        # Logit-B coefficients
     
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
-  }
-  
-  # Compress bounds for equal variances constraint
-  if (equal_variances) {
-    # Use compress_variances helper function on the bounds vectors (no model_type needed)
-    bounds$lower <- compress_variances(bounds$lower, K)
-    bounds$upper <- compress_variances(bounds$upper, K)
   }
   
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
     
-    if (verbose && !parallel) {
+    if (verbose >= 2 && !parallel) {
       cat("  Starting point", start_idx, "of", n_starts, "\n")
     }
     
     tryCatch({
-      # 1. Transform parameters to unconstrained space
-      transformed_params <- transform_parameters(start_params, "gas")
+      # Transform parameters to unconstrained space for optimization
+      transformed_params <- transform_parameters(start_params)
       
-      # 2. Compress parameters if using equal variances
-      if (equal_variances) {
-        transformed_params <- compress_variances(transformed_params, K)
-      }
-      
-      # 3. Run optimization
-      trace_setting <- if (verbose > 1) 1 else 0
+      # Run optimization
+      trace_setting <- if (verbose >= 2) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = function(par_t, y, B_burnin, C, n_nodes, scaling_method, use_fallback, A_threshold) {
-          # Handle compression inside the objective function
-          working_par_t <- par_t
-          if (equal_variances) {
-            working_par_t <- expand_variances(par_t, K)
-          }
+        objective = function(par_t) {
+          # Transform parameters back to natural space with proper attributes
+          par_t_with_attrs <- transformed_params  # Copy attributes from start
+          par_t_with_attrs[] <- par_t  # Update values
+          attr(par_t_with_attrs, "parameterization") <- "transformed"
           
-          # Transform parameters back to original parameter space
-          par <- untransform_parameters(working_par_t, "gas")
+          par_natural <- untransform_parameters(par_t_with_attrs)
           
-          # Extract the components
-          mu <- mean_from_par(par, "gas")
-          sigma2 <- sigma2_from_par(par, "gas")
-          init_trans <- transp_from_par(par, "gas")
-          A <- A_from_par(par, "gas")
-          B <- B_from_par(par, "gas")
-          
-          # Calculate likelihood and return it
-          l <- Rfiltering_GAS(mu, sigma2, init_trans, A, B, y, B_burnin, C, 
-                              n_nodes, scaling_method, use_fallback, A_threshold, verbose = FALSE)
-          return(l[1])
+          # Calculate negative log-likelihood (no diagnostics for speed)
+          neg_log_lik <- Rfiltering_GAS(par_natural, y, B_burnin, C, 
+                                        n_nodes = n_nodes, scaling_method = scaling_method,
+                                        use_fallback = use_fallback, A_threshold = A_threshold,
+                                        diagnostics = FALSE, verbose = FALSE)
+          return(neg_log_lik)
         },
         lower = bounds$lower,
         upper = bounds$upper,
-        y = y,
-        B_burnin = B_burnin,
-        C = C,
-        n_nodes = n_nodes,
-        scaling_method = scaling_method,
-        use_fallback = use_fallback,
-        A_threshold = A_threshold,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
       
-      # 4. Expand parameters if using equal variances
-      result_params <- optimization_result$par
-      if (equal_variances) {
-        result_params <- expand_variances(result_params, K)
-      }
+      # Transform final parameters back to natural space
+      final_par_t <- transformed_params  # Copy attributes
+      final_par_t[] <- optimization_result$par  # Update values
+      attr(final_par_t, "parameterization") <- "transformed"
       
-      # 5. Untransform parameters
-      estimated_params <- untransform_parameters(result_params, "gas")
+      estimated_params <- untransform_parameters(final_par_t)
       
-      # Store the final parameters in the optimization result for consistency
+      # Store the final parameters in the optimization result
       optimization_result$final_par <- estimated_params
       
       # Return result with metadata
@@ -765,7 +642,7 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   }
   
   # Run optimization(s) using future package
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Running optimizations...\n")
     opt_start_time <- Sys.time()
   }
@@ -776,7 +653,7 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
     future.seed = seed
   )
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     opt_end_time <- Sys.time()
     cat("Optimizations completed in", 
         format(difftime(opt_end_time, opt_start_time), digits = 4), "\n")
@@ -799,122 +676,110 @@ estimate_gas_model <- function(y, K = 3, B_burnin = 100, C = 50,
   n_converged <- sum(convergence_codes == 0)
   n_failed <- sum(convergence_codes == 999)
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Best result from starting point", best_result$start_idx, "\n")
     cat("Convergence summary:", n_converged, "converged,", 
         n_starts - n_converged - n_failed, "non-convergent,", n_failed, "failed\n")
-    cat("Best negative log-likelihood:", best_result$objective, "\n")
+    cat("Best negative log-likelihood:", sprintf("%.6f", best_result$objective), "\n")
   }
   
   # Extract the best optimization result
   optimization_result <- best_result$result
-  
-  # Get final parameters (already processed through our pipeline above)
   estimated_params <- optimization_result$final_par
   
-  # Extract different parameter components
-  mu_est <- mean_from_par(estimated_params, "gas")
-  sigma2_est <- sigma2_from_par(estimated_params, "gas")
-  init_trans_est <- transp_from_par(estimated_params, "gas")
-  A_est <- A_from_par(estimated_params, "gas")
-  B_est <- B_from_par(estimated_params, "gas")
-  
   # Calculate model diagnostics
-  # Note: use the original parameter count for AIC/BIC calculation
-  num_params_original <- length(estimated_params)  # Full parameter vector
+  num_params <- length(estimated_params)
   num_data_points <- length(y) - B_burnin - C
   
-  aic <- 2 * optimization_result$objective + 2 * num_params_original
-  bic <- 2 * optimization_result$objective + num_params_original * log(num_data_points)
+  aic <- 2 * optimization_result$objective + 2 * num_params
+  bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
-  # Calculate filtered probabilities and other model outputs
-  full_likelihood <- Rfiltering_GAS(
-    mu_est, sigma2_est, init_trans_est, A_est, B_est, y, B_burnin, C, 
-    n_nodes, scaling_method, use_fallback, A_threshold, verbose = TRUE
-  )
+  # Calculate filtered probabilities and additional diagnostics (with full diagnostics)
+  full_likelihood_result <- Rfiltering_GAS(estimated_params, y, B_burnin, C,
+                                           n_nodes = n_nodes, scaling_method = scaling_method,
+                                           use_fallback = use_fallback, A_threshold = A_threshold,
+                                           diagnostics = TRUE, verbose = (verbose >= 2))
   
-  filtered_probs <- attr(full_likelihood, "X.t")
-  transition_probs <- attr(full_likelihood, "p_trans")
-  scaled_scores <- attr(full_likelihood, "score_scaled")
-  gas_diagnostics_raw <- attr(full_likelihood, "gas_diagnostics")
-  model_type <- attr(full_likelihood, "model_type")
+  # Extract GAS-specific diagnostics
+  gas_diagnostics <- attr(full_likelihood_result, "gas_diagnostics")
+  model_type_used <- if (!is.null(gas_diagnostics)) gas_diagnostics$model_type else "full_gas"
   
-  # Prepare results (same format as original function)
+  # Clean up parallel processing
+  if (parallel) {
+    future::plan(future::sequential)
+  }
+  
+  # Compile final results
   results_list <- list(
-    parameters = list(
-      mu = mu_est,
-      sigma2 = sigma2_est,
-      init_trans = init_trans_est,
-      A = A_est,
-      B = B_est
-    ),
+    parameters = estimated_params,
+    optimization = optimization_result,
     diagnostics = list(
-      loglik = -optimization_result$objective,
+      neg_log_likelihood = optimization_result$objective,
+      log_likelihood = -optimization_result$objective,
       aic = aic,
       bic = bic,
-      num_params = num_params_original,
-      num_data_points = num_data_points
+      num_parameters = num_params,
+      num_data_points = num_data_points,
+      convergence_code = optimization_result$convergence,
+      n_starts = n_starts,
+      n_converged = n_converged,
+      n_failed = n_failed
     ),
-    optimization = optimization_result,
-    filtered_probabilities = filtered_probs,
-    transition_probabilities = transition_probs,
-    scaled_scores = scaled_scores,
-    gas_diagnostics = gas_diagnostics_raw,
     model_info = list(
-      type = "GAS",
-      actual_model_used = model_type,
       K = K,
-      B_burnin = B_burnin,
-      C = C,
+      model_type = "gas",
+      model_type_used = model_type_used,
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      parameterization = "natural"
+    ),
+    gas_settings = list(
       n_nodes = n_nodes,
       scaling_method = scaling_method,
       use_fallback = use_fallback,
-      A_threshold = A_threshold,
-      equal_variances = equal_variances
-    )
+      A_threshold = A_threshold
+    ),
+    data_info = list(
+      n_obs = length(y),
+      burn_in = B_burnin,
+      cut_off = C,
+      n_used = num_data_points
+    ),
+    filtered_probabilities = attr(full_likelihood_result, "X.t"),
+    time_varying_probs = attr(full_likelihood_result, "p_trans"),
+    f_values = attr(full_likelihood_result, "f"),
+    score_values = attr(full_likelihood_result, "score_scaled"),
+    gas_diagnostics = gas_diagnostics,
+    likelihood_components = list(
+      log_lik_values = attr(full_likelihood_result, "log_lik_values"),
+      total_likelihood = attr(full_likelihood_result, "tot.lik")
+    ),
+    all_results = results  # For detailed diagnostics if needed
   )
   
-  # Add multi-start specific information (only if multiple starts)
-  if (n_starts > 1) {
-    results_list$multistart_info <- list(
-      n_starts = n_starts,
-      parallel_used = parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE),
-      cores_used = cores,
-      best_start_idx = best_result$start_idx,
-      n_converged = n_converged,
-      n_failed = n_failed,
-      all_objectives = sapply(results, function(x) x$objective),
-      convergence_codes = convergence_codes
-    )
-  }
+  # Add convenient parameter extraction
+  results_list$mu_est <- extract_parameter_component(estimated_params, "mu")
+  results_list$sigma2_est <- extract_parameter_component(estimated_params, "sigma2")
+  results_list$init_trans_est <- extract_parameter_component(estimated_params, "trans_prob")
+  results_list$A_est <- extract_parameter_component(estimated_params, "A")
+  results_list$B_est <- extract_parameter_component(estimated_params, "B")
   
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Total estimation time:", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-    cat("Final model type used:", model_type, "\n")
-    cat("Max |A| estimated:", round(max(abs(A_est)), 6), "\n")
-    cat("AIC:", aic, "BIC:", bic, "\n")
-    cat("Estimated means:", round(mu_est, 4), "\n")
-    cat("Estimated variances:", round(sigma2_est, 4), "\n")
+  if (verbose >= 1) {
+    cat("\nEstimation completed successfully!\n")
+    cat("Final model type used:", model_type_used, "\n")
+    cat("Final log-likelihood:", sprintf("%.6f", -optimization_result$objective), "\n")
+    cat("AIC:", sprintf("%.2f", aic), "BIC:", sprintf("%.2f", bic), "\n")
     
-    # Report variance constraint status
-    if (equal_variances) {
-      cat("Note: All variances constrained to be equal\n")
-    }
-    
-    cat("Estimated A coefficients (mean):", round(mean(A_est), 6), "\n")
-    cat("Estimated B coefficients (mean):", round(mean(B_est), 4), "\n")
-    
-    # GAS-specific diagnostics
-    if (!is.null(gas_diagnostics_raw)) {
-      if (model_type == "constant_fallback") {
-        cat("Used constant model fallback - no GAS score calculations performed\n")
-      } else {
-        cat("GAS diagnostics - Mean Fisher Info:", round(gas_diagnostics_raw$mean_fisher_info, 4), "\n")
-        cat("GAS diagnostics - Mean Score Norm:", round(gas_diagnostics_raw$mean_score_norm, 4), "\n")
-        cat("GAS diagnostics - Zero Score %:", round(gas_diagnostics_raw$zero_score_percentage, 1), "%\n")
-      }
+    # GAS-specific summary
+    if (model_type_used == "constant_fallback") {
+      cat("Used constant model fallback - A coefficients below threshold\n")
+    } else if (!is.null(gas_diagnostics)) {
+      cat("Max |A| estimated:", sprintf("%.6f", max(abs(results_list$A_est))), "\n")
+      cat("Mean |B| estimated:", sprintf("%.4f", mean(abs(results_list$B_est))), "\n")
+      cat("GAS score diagnostics:\n")
+      cat("  Mean Fisher Info:", sprintf("%.4f", gas_diagnostics$mean_fisher_info), "\n")
+      cat("  Mean Score Norm:", sprintf("%.4f", gas_diagnostics$mean_score_norm), "\n")
+      cat("  Zero Score %:", sprintf("%.1f%%", gas_diagnostics$zero_score_percentage), "\n")
     }
   }
   

@@ -15,52 +15,51 @@ source("helpers/parameter_transforms.R")
 #'
 #' @param M Number of simulation runs to be performed
 #' @param N Length of the simulation runs (discretized time)
-#' @param mu Vector of true means corresponding to each regime
-#' @param sigma2 Vector of true variances corresponding to each regime
-#' @param init_trans Initial transition probabilities for the latent process
-#' @param A Autoregressive factor weights, one for each transition probability
+#' @param par Parameter vector with attributes (mu, sigma2, init_trans, A)
 #' @param burn_in Number of burn-in observations to discard (default: 100)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
+#' Automatically detects configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Simulates data from a regime switching model where transition probabilities
 #' depend on previous values of the process itself. The relationship is defined as:
 #' f[t+1] = omega + A * y[t], followed by logistic transformation.
 #'
 #' @examples
-#' # Generate data for a 3-regime model
-#' mu_true <- c(-2, 1, 2)
-#' sigma2_true <- c(0.02, 0.2, 0.6)
-#' init_trans_true <- rep(0.2, 6)  # Off-diagonal elements for a 3x3 matrix
-#' A_true <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)
-#' data_sim <- dataTVPCD(10, 1000, mu_true, sigma2_true, init_trans_true, A_true)
-dataTVPCD <- function(M, N, mu, sigma2, init_trans, A, burn_in = 100) {
-  # Parameters:
-  # M           Number of simulation runs to be performed
-  # N           Length of the simulation runs (discretized time)
-  # mu          Vector of true means corresponding to each regime
-  # sigma2      Vector of true variances corresponding to each regime
-  # init_trans  Initial transition probabilities for the latent process
-  # A           Autoregressive factor weights, one for each transition probability
-  # burn_in     Number of burn-in observations to discard
+#' # Generate data using diagonal parameterization (original style)
+#' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9, 0.1, 0.1)  # mu, sigma2, p11, p22, A1, A2
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp", 
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
+#' data_sim <- dataTVPCD(10, 1000, par_diag)
+#' 
+#' # Generate data using off-diagonal parameterization (new style)
+#' par_offdiag <- c(-1, 1, 0.5, 0.5, 0.2, 0.1, 0.1, 0.1)  # mu, sigma2, p12, p21, A12, A21
+#' par_offdiag <- set_parameter_attributes(par_offdiag, K=2, model_type="tvp",
+#'                                         diag_probs=FALSE, equal_variances=FALSE)
+#' data_sim <- dataTVPCD(10, 1000, par_offdiag)
+dataTVPCD <- function(M, N, par, burn_in = 100) {
   
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
+  # Validate parameter vector and extract configuration
+  validate_parameter_attributes(par)
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  init_trans <- extract_parameter_component(par, "trans_prob")
+  A <- extract_parameter_component(par, "A")
+  
+  # Handle equal variances: expand single variance to K variances for simulation
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
   }
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
-  
-  # Ensure we have the right number of transition probabilities and A parameters
-  if (length(init_trans) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(init_trans)))
-  }
-  if (length(A) != n_transition) {
-    stop(sprintf("Error: Expected %d A parameters for %d regimes, got %d.", 
-                 n_transition, K, length(A)))
-  }
+  # Determine the number of transition parameters based on parameterization
+  n_transition <- length(init_trans)
   
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
@@ -89,11 +88,11 @@ dataTVPCD <- function(M, N, mu, sigma2, init_trans, A, burn_in = 100) {
     # Set initial values
     f[,1] <- omega
     p_trans_raw <- logistic(f[,1])
-    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
+    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     
     for (t in 1:(total_length-1)) {
       # Generate predicted probabilities
-      Pmatrix <- transition_matrix(p_trans[,t], check_validity = FALSE)
+      Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
       X_tlag[,t] <- Pmatrix %*% X_t[,t]
       
       # Sample a state based on the predicted probabilities and 
@@ -111,14 +110,14 @@ dataTVPCD <- function(M, N, mu, sigma2, init_trans, A, burn_in = 100) {
       X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
       
       # Update transition probabilities based on the observed y.sim[t]
-      # This is the key difference from the exogenous model
+      # This is the key difference from the constant model
       f[,t+1] <- omega + A * y.sim[t]
       p_trans_raw <- logistic(f[,t+1])
-      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, K)
+      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     }
     
     # For the last time point
-    Pmatrix <- transition_matrix(p_trans[,total_length-1], check_validity = FALSE)
+    Pmatrix <- transition_matrix(p_trans[,total_length-1], diag_probs = diag_probs, check_validity = FALSE)
     X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
     S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
     y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
@@ -132,57 +131,56 @@ dataTVPCD <- function(M, N, mu, sigma2, init_trans, A, burn_in = 100) {
 
 #' Filter observed data through the autoregressive regime-switching model
 #'
-#' @param mu Vector of means corresponding to each regime
-#' @param sigma2 Vector of variances corresponding to each regime
-#' @param init_trans Initial transition probabilities for the latent process
-#' @param A Autoregressive factor weights, one for each transition probability
+#' @param par Parameter vector with attributes (mu, sigma2, init_trans, A)
 #' @param y Observed time series increments
 #' @param B Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
+#' @param diagnostics If TRUE, include detailed diagnostic information (default: TRUE)
 #' @return Negative log-likelihood of observed data under the model
 #' @details
+#' Automatically reads configuration (diagonal vs off-diagonal, equal variances)
+#' from parameter attributes.
+#' 
 #' Filters observed data through the model to compute the likelihood.
 #' Returns the negative log-likelihood for compatibility with optimization functions.
+#' 
+#' The diagnostics parameter controls whether detailed information is attached
+#' as attributes (expensive during optimization, useful for final results).
 #'
 #' @examples
-#' # Calculate likelihood for a 3-regime model
-#' mu <- c(-2, 1, 2)
-#' sigma2 <- c(0.02, 0.2, 0.6)
-#' init_trans <- rep(0.2, 6)
-#' A <- c(0.1, -0.1, 0.05, -0.05, 0.2, -0.2)
-#' y <- rnorm(1000) 
-#' loglik <- Rfiltering_TVP(mu, sigma2, init_trans, A, y, 100, 50)
-Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
-  # Parameters passed to the function are:
-  # mu          Vector of true means corresponding to each regime
-  # sigma2      Vector of true variances corresponding to each regime
-  # init_trans  Initial transition probabilities for the latent process
-  # A           Autoregressive factor weights, one for each transition probability
-  # y           Observed time series increments
-  # B           Burn-in to be excluded at the beginning of the time series
-  # C           Cut-off to be excluded at the end of the time series
+#' # Filter data using diagonal parameterization
+#' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9, 0.1, 0.1)
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp",
+#'                                      diag_probs=TRUE, equal_variances=FALSE)
+#' y <- rnorm(1000)
+#' loglik <- Rfiltering_TVP(par_diag, y, 100, 50)
+Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   
-  # Ensure that means and variances have been provided for all regimes
-  if (length(mu) != length(sigma2)) {
-    stop("Error: Unequal number of means and variances. Mean and variance have to be supplied for each regime.")
+  # Only validate if diagnostics are enabled (performance optimization)
+  if (diagnostics) {
+    validate_parameter_attributes(par)
+  }
+  
+  K <- attr(par, "K")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  
+  # Extract parameter components using attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  init_trans <- extract_parameter_component(par, "trans_prob")
+  A <- extract_parameter_component(par, "A")
+  
+  # Handle equal variances: expand single variance to K variances for filtering
+  if (equal_variances && length(sigma2) == 1) {
+    sigma2 <- rep(sigma2, K)
   }
   
   # Determine length of the time series
   M <- length(y)
   
-  # Determine the number of regimes and transition parameters for the model
-  K <- length(mu)
-  n_transition <- K*(K-1)
-  
-  # Ensure we have the right number of transition probabilities and A parameters
-  if (length(init_trans) != n_transition) {
-    stop(sprintf("Error: Expected %d transition probabilities for %d regimes, got %d.", 
-                 n_transition, K, length(init_trans)))
-  }
-  if (length(A) != n_transition) {
-    stop(sprintf("Error: Expected %d A parameters for %d regimes, got %d.", 
-                 n_transition, K, length(A)))
-  }
+  # Determine the number of transition parameters based on parameterization
+  n_transition <- length(init_trans)
   
   # Initialize variables
   eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
@@ -199,16 +197,21 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
   p_trans <- matrix(0, nrow=n_transition, ncol=M)
   
   # Set initial values
-  f[,1] <- omega_LR
+  f[,1] <- omega
   p_trans_raw <- logistic(f[,1])
-  p_trans[,1] <- convert_to_valid_probs(p_trans_raw, K)
+  p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
   
   # Initial state probabilities (using stationary distribution)
-  X_t[,1] <- stat_dist(p_trans[,1], fallback_value = rep(1/K, K))
+  initial_probs <- tryCatch({
+    stat_dist(p_trans[,1], diag_probs = diag_probs)
+  }, error = function(e) {
+    rep(1/K, K)  # Fallback to uniform
+  })
+  X_t[,1] <- initial_probs
   
   for (t in 1:(M-1)) {
     # Generate predicted probabilities
-    Pmatrix <- transition_matrix(p_trans[,t], check_validity = FALSE)
+    Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
     X_tlag[,t] <- Pmatrix %*% X_t[,t]
     
     # Calculate likelihoods
@@ -227,14 +230,14 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
     }
     
     # Update transition probabilities based on the observed y[t]
-    # Note: we're using the actual observations now, not simulated values
+    # This is the key feature of the TVP model
     f[,t+1] <- omega + A * y[t]
     p_trans_raw <- logistic(f[,t+1])
-    p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, K)
+    p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
   }
   
   # Calculate likelihood for the last time point
-  Pmatrix <- transition_matrix(p_trans[,M-1], check_validity = FALSE)
+  Pmatrix <- transition_matrix(p_trans[,M-1], diag_probs = diag_probs, check_validity = FALSE)
   X_tlag[,M] <- Pmatrix %*% X_t[,M-1]
   for (k in 1:K) {
     eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
@@ -252,201 +255,177 @@ Rfiltering_TVP <- function(mu, sigma2, init_trans, A, y, B, C) {
     stop("Error: No valid data points after applying burn-in and cut-off.")
   }
   
-  logLikSum <- sum(log(tot_lik[valid_indices]))
+  log_lik_values <- log(tot_lik[valid_indices])
   
-  # Return negative sum of log-likelihoods (for minimizing)
-  res <- -logLikSum
+  # Handle any remaining invalid values
+  log_lik_values[!is.finite(log_lik_values)] <- log(.Machine$double.eps)
   
-  # Store additional information as attributes
-  attr(res, "X.t") <- t(X_t)
-  attr(res, "X.tlag") <- t(X_tlag)
-  attr(res, "p_trans") <- p_trans
+  # Calculate total negative log-likelihood
+  neg_log_lik <- -sum(log_lik_values)
   
-  return(res)
+  # Store additional information as attributes for diagnostics (if requested)
+  if (diagnostics) {
+    attr(neg_log_lik, "X.t") <- X_t
+    attr(neg_log_lik, "X.tlag") <- X_tlag
+    attr(neg_log_lik, "eta") <- eta
+    attr(neg_log_lik, "tot.lik") <- tot_lik
+    attr(neg_log_lik, "f") <- f
+    attr(neg_log_lik, "p_trans") <- p_trans
+    attr(neg_log_lik, "log_lik_values") <- log_lik_values
+    attr(neg_log_lik, "valid_indices") <- valid_indices
+    attr(neg_log_lik, "model_info") <- list(
+      K = K,
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      model_type = "tvp",
+      n_transition = n_transition
+    )
+  }
+  
+  return(neg_log_lik)
 }
 
-#' Estimate parameters for the autoregressive regime-switching model (TVP)
+#' Estimate TVP regime-switching model
 #'
-#' @param y Observed time series
+#' @param y Observed time series data
 #' @param K Number of regimes
-#' @param B Burn-in period to exclude from likelihood calculation
-#' @param C Cut-off period to exclude from likelihood calculation
-#' @param initial_params Initial parameter guesses (optional, only used when n_starts=1)
-#' @param bounds Parameter bounds for optimization in full parameter format (optional)
-#' @param n_starts Number of starting points for optimization (default: 1)
-#' @param parallel Whether to run multiple starts in parallel (default: FALSE)
-#' @param cores Number of cores to use for parallel processing (default: detectCores() - 1)
-#' @param seed Random seed for starting point generation (optional)
-#' @param verbose Whether to print progress information (default: TRUE)
-#' @param equal_variances Whether to constrain all regime variances to be equal (default: FALSE)
-#' @return List with estimated parameters and model diagnostics
+#' @param diag_probs If TRUE, use diagonal transition probability parameterization
+#' @param equal_variances If TRUE, constrain all regimes to have equal variances
+#' @param n_starts Number of random starting points for optimization (default: 10)
+#' @param B Burn-in observations to exclude (default: 100)
+#' @param C Cut-off observations to exclude (default: 50)
+#' @param bounds Optional list with lower and upper parameter bounds
+#' @param parallel Enable parallel processing for multiple starts (default: TRUE)
+#' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
+#' @param seed Random seed for reproducibility (optional)
+#' @param verbose Verbosity level (0=silent, 1=basic, 2=detailed)
+#' @return List with estimation results including parameters, diagnostics, and metadata
 #' @details
-#' Estimates model parameters using maximum likelihood estimation.
-#' When n_starts > 1, generates multiple diverse starting points and runs
-#' optimization in parallel (if parallel=TRUE) to improve robustness against
-#' local optima. Returns the result with the highest likelihood.
-#' 
-#' Uses the future package for cross-platform parallel processing that works
-#' on Windows, macOS, and Linux. The output format is identical regardless 
-#' of single or multi-start estimation.
-#' 
-#' When equal_variances=TRUE, all regime variances are constrained to be equal
-#' by compressing the variance parameters during optimization and expanding them
-#' back afterward. Parameters and bounds should always be provided in full format
-#' (with separate variance for each regime); compression is handled internally.
+#' UPDATED to support both diagonal and off-diagonal transition probability parameterizations
+#' using the new attribute-based parameter system. This enables exact validation against
+#' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
-#' # Single start (current behavior)
-#' results <- estimate_tvp_model(data, K=3)
+#' # Estimate model with diagonal probabilities (original style)
+#' y <- rnorm(1000)
+#' result_diag <- estimate_tvp_model(y, K=2, diag_probs=TRUE, n_starts=5)
 #' 
-#' # Multi-start with parallel processing
-#' results <- estimate_tvp_model(data, K=3, n_starts=10, parallel=TRUE)
-#' 
-#' # Multi-start sequential (for debugging)
-#' results <- estimate_tvp_model(data, K=3, n_starts=5, parallel=FALSE)
-#' 
-#' # Constrain variances to be equal (useful for comparing with benchmarks)
-#' results <- estimate_tvp_model(data, K=3, equal_variances=TRUE)
-estimate_tvp_model <- function(y, K = 3, B = 100, C = 50, 
-                               initial_params = NULL, bounds = NULL,
-                               n_starts = 1, parallel = FALSE, cores = NULL,
-                               seed = NULL, verbose = TRUE, equal_variances = FALSE) {
+#' # Estimate model with off-diagonal probabilities (new style)  
+#' result_offdiag <- estimate_tvp_model(y, K=2, diag_probs=FALSE, n_starts=5)
+estimate_tvp_model <- function(y, K, diag_probs = FALSE, equal_variances = FALSE,
+                               n_starts = 10, B = 100, C = 50, bounds = NULL,
+                               parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
-  # Set up cores (don't use more cores than starts)
-  if (is.null(cores)) {
-    cores <- max(1, parallel::detectCores() - 1)
+  # Input validation
+  if (!is.numeric(y) || length(y) == 0) {
+    stop("y must be a non-empty numeric vector")
   }
-  cores <- min(cores, n_starts)
-  
-  if (verbose) {
-    cat("Estimating TVP model with", K, "regimes")
-    if (equal_variances) {
-      cat(" (equal variances)")
-    }
-    cat("\n")
-    if (n_starts > 1) {
-      cat("Using", n_starts, "starting points")
-      if (parallel) {
-        cat(" with", cores, "cores in parallel\n")
-      } else {
-        cat(" sequentially\n")
-      }
-    } else {
-      cat("Using single starting point\n")
-    }
-    start_time <- Sys.time()
+  if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
+    stop("K must be an integer >= 2")
+  }
+  if (length(y) <= B + C + K) {
+    stop("Time series too short for specified burn-in and cut-off")
   }
   
-  # Set up parallel processing plan
-  if (parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE)) {
+  # Setup parallel processing
+  if (parallel) {
+    if (is.null(cores)) {
+      cores <- min(n_starts, future::availableCores() - 1, 4)  # Reasonable default
+    }
     future::plan(future::multisession, workers = cores)
-    on.exit(future::plan(future::sequential), add = TRUE)  # Cleanup
-    if (verbose) {
-      cat("Parallel processing enabled with future package\n")
-    }
   } else {
     future::plan(future::sequential)
-    if (parallel && n_starts > 1) {
-      warning("future.apply package not available, running sequentially")
-    }
   }
   
-  # Generate starting points
-  if (n_starts == 1 && !is.null(initial_params)) {
-    # Use user-provided starting point
-    starting_points <- list(initial_params)
-    if (verbose) {
-      cat("Using provided initial parameters\n")
-    }
-  } else {
-    # Generate diverse starting points
-    if (verbose && n_starts > 1) {
-      cat("Generating", n_starts, "diverse starting points...\n")
-    }
-    starting_points <- generate_starting_points(y, K, "tvp", n_starts, seed)
+  if (verbose >= 1) {
+    cat("Estimating TVP (autoregressive) regime-switching model\n")
+    cat("===================================================\n")
+    cat("K:", K, "regimes\n")
+    cat("Data points:", length(y), "(using", length(y) - B - C, "after burn-in/cut-off)\n")
+    cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
+    cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
+    cat("Starting points:", n_starts, "\n")
+    if (parallel) cat("Parallel processing:", cores, "cores\n")
+    cat("\n")
   }
   
-  # Create default bounds if none provided
+  # Generate diverse starting points using updated function
+  if (verbose >= 1) cat("Generating starting points...\n")
+  starting_points <- generate_starting_points(
+    y = y,
+    K = K,
+    model_type = "tvp",
+    n_starts = n_starts,
+    diag_probs = diag_probs,
+    equal_variances = equal_variances,
+    seed = seed
+  )
+  
+  # Create parameter bounds if none provided
   if (is.null(bounds)) {
-    n_transition <- K * (K - 1)
+    # Calculate expected parameter count
+    expected_length <- calculate_expected_length(K, "tvp", diag_probs, equal_variances)
     
-    lower_bounds <- c(rep(-Inf, K),               # No bounds on means
-                      rep(-Inf, K),               # Variance >= 0 (log-transformed)
-                      rep(-Inf, n_transition),    # Probabilities >= 0 (logit-transformed)
-                      rep(-1, n_transition))      # A-coefficients bounded
+    # Create default bounds for transformed parameters
+    n_mu <- K
+    n_sigma2 <- ifelse(equal_variances, 1, K)
+    n_trans <- ifelse(diag_probs, K, K*(K-1))
+    n_A <- n_trans  # A coefficients match transition structure
     
-    upper_bounds <- c(rep(Inf, K),                # No bounds on means
-                      rep(Inf, K),                # Variance unbounded
-                      rep(Inf, n_transition),     # Probabilities <= 1 (logit-transformed)
-                      rep(1, n_transition))       # A-coefficients bounded
+    lower_bounds <- c(rep(-Inf, n_mu),      # No bounds on means
+                      rep(-Inf, n_sigma2),  # Log-variances
+                      rep(-Inf, n_trans),   # Logit-probabilities  
+                      rep(-Inf, n_A))       # Logit-A coefficients
+    
+    upper_bounds <- c(rep(Inf, n_mu),       # No bounds on means
+                      rep(Inf, n_sigma2),   # Log-variances
+                      rep(Inf, n_trans),    # Logit-probabilities
+                      rep(Inf, n_A))        # Logit-A coefficients
     
     bounds <- list(lower = lower_bounds, upper = upper_bounds)
-  }
-  
-  # Compress bounds if using equal variances (applies to both user-provided and default bounds)
-  if (equal_variances) {
-    bounds$lower <- compress_variances(bounds$lower, K)
-    bounds$upper <- compress_variances(bounds$upper, K)
   }
   
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
     
-    if (verbose && !parallel) {
+    if (verbose >= 2 && !parallel) {
       cat("  Starting point", start_idx, "of", n_starts, "\n")
     }
     
     tryCatch({
-      # 1. Transform parameters to unconstrained space for optimization
-      transformed_params <- transform_parameters(start_params, "tvp")
+      # Transform parameters to unconstrained space for optimization
+      transformed_params <- transform_parameters(start_params)
       
-      # 2. Compress parameters (conditional)
-      if (equal_variances) {
-        transformed_params <- compress_variances(transformed_params, K)
-      }
-      
-      # 3. Run optimization (same way regardless of equal_variances)
-      trace_setting <- if (verbose > 1) 1 else 0
+      # Run optimization
+      trace_setting <- if (verbose >= 2) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = function(par_t, y, B, C) {
-          # Handle compression inside the objective function
-          working_par_t <- par_t
-          if (equal_variances) {
-            working_par_t <- expand_variances(par_t, K)
-          }
+        objective = function(par_t) {
+          # Transform parameters back to natural space with proper attributes
+          par_t_with_attrs <- transformed_params  # Copy attributes from start
+          par_t_with_attrs[] <- par_t  # Update values
+          attr(par_t_with_attrs, "parameterization") <- "transformed"
           
-          # Transform parameters back to original parameter space
-          par <- untransform_parameters(working_par_t, "tvp")
+          par_natural <- untransform_parameters(par_t_with_attrs)
           
-          mu <- mean_from_par(par, "tvp")
-          sigma2 <- sigma2_from_par(par, "tvp")
-          init_trans <- transp_from_par(par, "tvp")
-          A <- A_from_par(par, "tvp")
-          
-          # Calculate likelihood and return it
-          l <- Rfiltering_TVP(mu, sigma2, init_trans, A, y, B, C)
-          return(l[1])
+          # Calculate negative log-likelihood (no diagnostics for speed)
+          neg_log_lik <- Rfiltering_TVP(par_natural, y, B, C, diagnostics = FALSE)
+          return(neg_log_lik)
         },
         lower = bounds$lower,
         upper = bounds$upper,
-        y = y,
-        B = B,
-        C = C,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
       
-      # 4. Decompress parameters (conditional)
-      result_params <- optimization_result$par
-      if (equal_variances) {
-        result_params <- expand_variances(result_params, K)
-      }
+      # Transform final parameters back to natural space
+      final_par_t <- transformed_params  # Copy attributes
+      final_par_t[] <- optimization_result$par  # Update values
+      attr(final_par_t, "parameterization") <- "transformed"
       
-      # 5. Untransform parameters (always happens)
-      estimated_params <- untransform_parameters(result_params, "tvp")
+      estimated_params <- untransform_parameters(final_par_t)
       
-      # Store the final parameters in the optimization result for consistency
+      # Store the final parameters in the optimization result
       optimization_result$final_par <- estimated_params
       
       # Return result with metadata
@@ -471,7 +450,7 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   }
   
   # Run optimization(s) using future package
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Running optimizations...\n")
     opt_start_time <- Sys.time()
   }
@@ -482,7 +461,7 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
     future.seed = seed
   )
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     opt_end_time <- Sys.time()
     cat("Optimizations completed in", 
         format(difftime(opt_end_time, opt_start_time), digits = 4), "\n")
@@ -505,92 +484,81 @@ estimate_tvp_model <- function(y, K = 3, B = 100, C = 50,
   n_converged <- sum(convergence_codes == 0)
   n_failed <- sum(convergence_codes == 999)
   
-  if (verbose && n_starts > 1) {
+  if (verbose >= 1 && n_starts > 1) {
     cat("Best result from starting point", best_result$start_idx, "\n")
     cat("Convergence summary:", n_converged, "converged,", 
         n_starts - n_converged - n_failed, "non-convergent,", n_failed, "failed\n")
-    cat("Best negative log-likelihood:", best_result$objective, "\n")
+    cat("Best negative log-likelihood:", sprintf("%.6f", best_result$objective), "\n")
   }
   
   # Extract the best optimization result
   optimization_result <- best_result$result
-  
-  # Get final parameters (already processed through our pipeline above)
   estimated_params <- optimization_result$final_par
   
-  # Extract different parameter components
-  mu_est <- mean_from_par(estimated_params, "tvp")
-  sigma2_est <- sigma2_from_par(estimated_params, "tvp")
-  init_trans_est <- transp_from_par(estimated_params, "tvp")
-  A_est <- A_from_par(estimated_params, "tvp")
-  
   # Calculate model diagnostics
-  # Note: use the original parameter count for AIC/BIC calculation
-  num_params_original <- length(estimated_params)  # Full parameter vector
+  num_params <- length(estimated_params)
   num_data_points <- length(y) - B - C
   
-  aic <- 2 * optimization_result$objective + 2 * num_params_original
-  bic <- 2 * optimization_result$objective + num_params_original * log(num_data_points)
+  aic <- 2 * optimization_result$objective + 2 * num_params
+  bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
-  # Calculate filtered probabilities
-  full_likelihood <- Rfiltering_TVP(
-    mu_est, sigma2_est, init_trans_est, A_est, y, B, C
-  )
+  # Calculate filtered probabilities and additional diagnostics (with full diagnostics)
+  full_likelihood_result <- Rfiltering_TVP(estimated_params, y, B, C, diagnostics = TRUE)
   
-  filtered_probs <- attr(full_likelihood, "X.t")
-  transition_probs <- attr(full_likelihood, "p_trans")
-  
-  # Prepare results (same format as original function)
-  results_list <- list(
-    parameters = list(
-      mu = mu_est,
-      sigma2 = sigma2_est,
-      init_trans = init_trans_est,
-      A = A_est
-    ),
-    diagnostics = list(
-      loglik = -optimization_result$objective,
-      aic = aic,
-      bic = bic,
-      num_params = num_params_original,
-      num_data_points = num_data_points
-    ),
-    optimization = optimization_result,
-    filtered_probabilities = filtered_probs,
-    transition_probabilities = transition_probs,
-    model_info = list(
-      type = "TVP",
-      K = K,
-      B = B,
-      C = C,
-      equal_variances = equal_variances
-    )
-  )
-  
-  # Add multi-start specific information (only if multiple starts)
-  if (n_starts > 1) {
-    results_list$multistart_info <- list(
-      n_starts = n_starts,
-      parallel_used = parallel && n_starts > 1 && requireNamespace("future.apply", quietly = TRUE),
-      cores_used = cores,
-      best_start_idx = best_result$start_idx,
-      n_converged = n_converged,
-      n_failed = n_failed,
-      all_objectives = sapply(results, function(x) x$objective),
-      convergence_codes = convergence_codes
-    )
+  # Clean up parallel processing
+  if (parallel) {
+    future::plan(future::sequential)
   }
   
-  if (verbose) {
-    end_time <- Sys.time()
-    cat("Total estimation time:", 
-        format(difftime(end_time, start_time), digits = 4), "\n")
-    cat("AIC:", aic, "BIC:", bic, "\n")
-    cat("Estimated means:", round(mu_est, 4), "\n")
-    cat("Estimated variances:", round(sigma2_est, 4), "\n")
-    if (equal_variances) {
-      cat("Note: All variances constrained to be equal\n")
-    }
+  # Compile final results
+  results_list <- list(
+    parameters = estimated_params,
+    optimization = optimization_result,
+    diagnostics = list(
+      neg_log_likelihood = optimization_result$objective,
+      log_likelihood = -optimization_result$objective,
+      aic = aic,
+      bic = bic,
+      num_parameters = num_params,
+      num_data_points = num_data_points,
+      convergence_code = optimization_result$convergence,
+      n_starts = n_starts,
+      n_converged = n_converged,
+      n_failed = n_failed
+    ),
+    model_info = list(
+      K = K,
+      model_type = "tvp",
+      diag_probs = diag_probs,
+      equal_variances = equal_variances,
+      parameterization = "natural"
+    ),
+    data_info = list(
+      n_obs = length(y),
+      burn_in = B,
+      cut_off = C,
+      n_used = num_data_points
+    ),
+    filtered_probabilities = attr(full_likelihood_result, "X.t"),
+    time_varying_probs = attr(full_likelihood_result, "p_trans"),
+    f_values = attr(full_likelihood_result, "f"),
+    likelihood_components = list(
+      log_lik_values = attr(full_likelihood_result, "log_lik_values"),
+      total_likelihood = attr(full_likelihood_result, "tot.lik")
+    ),
+    all_results = results  # For detailed diagnostics if needed
+  )
+  
+  # Add convenient parameter extraction
+  results_list$mu_est <- extract_parameter_component(estimated_params, "mu")
+  results_list$sigma2_est <- extract_parameter_component(estimated_params, "sigma2")
+  results_list$init_trans_est <- extract_parameter_component(estimated_params, "trans_prob")
+  results_list$A_est <- extract_parameter_component(estimated_params, "A")
+  
+  if (verbose >= 1) {
+    cat("\nEstimation completed successfully!\n")
+    cat("Final log-likelihood:", sprintf("%.6f", -optimization_result$objective), "\n")
+    cat("AIC:", sprintf("%.2f", aic), "BIC:", sprintf("%.2f", bic), "\n")
   }
   
   return(results_list)
