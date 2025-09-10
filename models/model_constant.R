@@ -502,7 +502,7 @@ estimate_constant_model <- function(y, K, diag_probs = FALSE, equal_variances = 
   # Add convenient parameter extraction
   results_list$mu_est <- extract_parameter_component(estimated_params, "mu")
   results_list$sigma2_est <- extract_parameter_component(estimated_params, "sigma2")
-  results_list$trans_prob_est <- extract_parameter_component(estimated_params, "trans_prob")
+  results_list$init_trans_est <- extract_parameter_component(estimated_params, "trans_prob")
   
   if (verbose >= 1) {
     cat("\nEstimation completed successfully!\n")
