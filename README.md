@@ -42,11 +42,7 @@ multiregime-TVTP/
 │
 ├── tests/                    # Unit tests (to be implemented)
 │
-├── results/                  # Output directory for results (gitignored)
-│
-├── simulation.R              # Original 2-regime implementation (reference)
-├── Paper_2025.pdf           # Original article (Sendstad et al. 2025)
-└── Bazzi...pdf              # Background paper (Bazzi et al. 2017)
+└── results/                  # Output directory for results (gitignored)
 ```
 
 ## Installation
