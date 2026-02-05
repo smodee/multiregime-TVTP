@@ -85,8 +85,9 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
     # Initial state probabilities (uniform distribution)
     X_t[,1] <- rep(1/K, K)
     
-    # Set initial values
-    f[,1] <- omega
+    # Set initial values - use omega_LR (long-run/unconditional value) for initialization
+    # This matches the original implementation and literature guidance
+    f[,1] <- omega_LR
     p_trans_raw <- logistic(f[,1])
     p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     
@@ -196,8 +197,9 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   f <- matrix(0, nrow=n_transition, ncol=M)
   p_trans <- matrix(0, nrow=n_transition, ncol=M)
   
-  # Set initial values
-  f[,1] <- omega
+  # Set initial values - use omega_LR (long-run/unconditional value) for initialization
+  # This matches the original implementation and literature guidance
+  f[,1] <- omega_LR
   p_trans_raw <- logistic(f[,1])
   p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
   

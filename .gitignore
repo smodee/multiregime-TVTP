@@ -50,3 +50,6 @@ rsconnect/
 
 # Results
 results/*
+
+# Claude Code
+.claude/
