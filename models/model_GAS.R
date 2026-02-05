@@ -41,8 +41,8 @@ source("models/model_constant.R")
 #' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas", 
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
 #' data_sim <- dataGASCD(10, 1000, par_diag)
-dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30, 
-                      scaling_method = "simple", quad_sample_size = 1000) {
+dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
+                      scaling_method = NULL, quad_sample_size = 1000) {
   
   # Validate parameter vector and extract configuration
   validate_parameter_attributes(par)
@@ -238,7 +238,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
 #' y <- rnorm(1000)
 #' loglik <- Rfiltering_GAS(par_diag, y, 100, 50)
-Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "simple",
+Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = NULL,
                            use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
   
   # Only validate if diagnostics are enabled (performance optimization)
@@ -497,7 +497,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "
 #' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
 estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,
-                               n_nodes = 30, scaling_method = "simple", 
+                               n_nodes = 30, scaling_method = NULL,
                                use_fallback = TRUE, A_threshold = 1e-4,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
@@ -530,7 +530,12 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
     cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
     cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
     cat("Starting points:", n_starts, "\n")
-    cat("GAS settings: scaling_method =", scaling_method, ", n_nodes =", n_nodes, "\n")
+    effective_scaling <- if (is.null(scaling_method)) {
+      if (diag_probs) "original (auto)" else "simple (auto)"
+    } else {
+      scaling_method
+    }
+    cat("GAS settings: scaling_method =", effective_scaling, ", n_nodes =", n_nodes, "\n")
     cat("Fallback enabled:", use_fallback, "(threshold =", A_threshold, ")\n")
     if (parallel) cat("Parallel processing:", cores, "cores\n")
     cat("\n")
