@@ -213,26 +213,38 @@ format_time <- function(seconds) {
 #' @param K Number of regimes
 #' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
 #' @param n_starts Number of starting points to generate
+#' @param diag_probs If TRUE, use diagonal transition probability parameterization
+#' @param equal_variances If TRUE, use single shared variance parameter
 #' @param seed Random seed for reproducibility (optional)
-#' @return List of parameter vectors, each suitable for the specified model type
+#' @return List of parameter vectors with proper attributes, each suitable for the specified model type
 #' @details
 #' Generates diverse starting points for maximum likelihood estimation to help
 #' avoid local optima. Uses data-driven heuristics to create reasonable initial
 #' guesses while adding random variation for diversity.
 #' 
+#' UPDATED to support both diagonal and off-diagonal transition probability
+#' parameterizations, as well as equal variance constraints. All returned
+#' parameter vectors have proper attributes set for robust handling.
+#' 
 #' Strategy:
 #' - Means: Based on data quantiles with random noise
-#' - Variances: Fractions of data variance with random scaling
-#' - Transition probabilities: Around 1/(K+1) with random variation, constrained to be valid
+#' - Variances: Fractions of data variance (single if equal_variances=TRUE)
+#' - Transition probabilities: Generated according to diag_probs setting
 #' - A coefficients: Random values in [0, 0.5] for moderate sensitivity
 #' - B coefficients: Random values in [0.5, 0.99] for persistence
 #'
 #' @examples
-#' # Generate 5 starting points for a 3-regime GAS model
+#' # Generate starting points for diagonal parameterization (original style)
 #' y <- rnorm(1000)
-#' starts <- generate_starting_points(y, K=3, model_type="gas", n_starts=5)
+#' starts_diag <- generate_starting_points(y, K=2, model_type="constant", 
+#'                                          n_starts=5, diag_probs=TRUE)
+#' 
+#' # Generate starting points for off-diagonal parameterization (new style)
+#' starts_offdiag <- generate_starting_points(y, K=3, model_type="tvp", 
+#'                                             n_starts=5, diag_probs=FALSE)
 generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "exogenous", "gas"), 
-                                     n_starts, seed = NULL) {
+                                     n_starts, diag_probs = FALSE, equal_variances = FALSE, 
+                                     seed = NULL) {
   # Validate inputs
   if (!is.numeric(y) || length(y) == 0) {
     stop("y must be a non-empty numeric vector")
@@ -247,6 +259,14 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
   }
   
   model_type <- match.arg(model_type)
+  
+  # Validate logical parameters
+  if (!is.logical(diag_probs) || length(diag_probs) != 1) {
+    stop("diag_probs must be a single logical value")
+  }
+  if (!is.logical(equal_variances) || length(equal_variances) != 1) {
+    stop("equal_variances must be a single logical value")
+  }
   
   # Set seed for reproducibility if provided
   if (!is.null(seed)) {
@@ -270,8 +290,12 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
     y_sd <- 1.0
   }
   
-  # Calculate number of transition probabilities needed
-  n_transition <- K * (K - 1)
+  # Calculate number of transition probabilities based on parameterization
+  if (diag_probs) {
+    n_transition <- K  # Diagonal elements only
+  } else {
+    n_transition <- K * (K - 1)  # Off-diagonal elements
+  }
   
   # Generate starting points
   starting_points <- vector("list", n_starts)
@@ -287,22 +311,36 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
     noise_scale <- 0.5 * y_sd
     mu_start <- base_means + runif(K, -noise_scale, noise_scale)
     
-    # 2. Generate variances as fractions of data variance
-    # Use different fractions for diversity
-    var_fractions <- runif(K, 0.3, 1.5)  # 30% to 150% of data variance
-    sigma2_start <- var_fractions * y_var
+    # 2. Generate variances based on equal_variances setting
+    if (equal_variances) {
+      # Single shared variance parameter
+      var_fraction <- runif(1, 0.5, 1.5)  # 50% to 150% of data variance
+      sigma2_start <- var_fraction * y_var
+    } else {
+      # Separate variance for each regime
+      var_fractions <- runif(K, 0.3, 1.5)  # 30% to 150% of data variance
+      sigma2_start <- var_fractions * y_var
+    }
     
-    # 3. Generate transition probabilities
-    # Start with base probability around 1/(K+1), add noise
-    base_prob <- 1.0 / (K + 1)
-    noise_range <- 0.1  # ±10% variation
-    
-    # Generate raw probabilities with noise
-    raw_trans_probs <- pmax(0.01, pmin(0.8, 
-                                       base_prob + runif(n_transition, -noise_range, noise_range)))
-    
-    # Ensure they form a valid stochastic matrix using existing helper
-    trans_prob_start <- convert_to_valid_probs(raw_trans_probs, K)
+    # 3. Generate transition probabilities based on parameterization
+    if (diag_probs) {
+      # Generate diagonal persistence probabilities
+      # Higher values (0.5-0.95) for persistence, with some variation
+      trans_prob_start <- runif(K, 0.5, 0.95)
+      
+    } else {
+      # Generate off-diagonal transition probabilities
+      # Start with base probability around 1/(K+1), add noise
+      base_prob <- 1.0 / (K + 1)
+      noise_range <- 0.1  # ±10% variation
+      
+      # Generate raw probabilities with noise
+      raw_trans_probs <- pmax(0.01, pmin(0.8, 
+                                         base_prob + runif(n_transition, -noise_range, noise_range)))
+      
+      # Ensure they form a valid stochastic matrix using new helper
+      trans_prob_start <- convert_to_valid_probs(raw_trans_probs, diag_probs = FALSE)
+    }
     
     # 4. Build parameter vector based on model type
     if (model_type == "constant") {
@@ -321,19 +359,38 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start, B_start)
     }
     
-    # Validate the parameter vector
+    # 5. Set proper attributes using the new parameter system
     tryCatch({
-      validate_parameter_vector(param_vector, model_type, K)
+      param_vector <- set_parameter_attributes(
+        par = param_vector,
+        K = K,
+        model_type = model_type,
+        diag_probs = diag_probs,
+        equal_variances = equal_variances,
+        parameterization = "natural"
+      )
+      
       starting_points[[i]] <- param_vector
+      
     }, error = function(e) {
       # If validation fails, create a safe fallback
       warning(paste("Starting point", i, "validation failed, using fallback:", e$message))
       
-      # Create conservative fallback
+      # Create conservative fallback with proper structure
       mu_fallback <- seq(y_mean - y_sd, y_mean + y_sd, length.out = K)
-      sigma2_fallback <- rep(y_var, K)
-      trans_prob_fallback <- rep(0.2, n_transition)
-      trans_prob_fallback <- convert_to_valid_probs(trans_prob_fallback, K)
+      
+      if (equal_variances) {
+        sigma2_fallback <- y_var
+      } else {
+        sigma2_fallback <- rep(y_var, K)
+      }
+      
+      if (diag_probs) {
+        trans_prob_fallback <- rep(0.8, K)  # High persistence
+      } else {
+        trans_prob_fallback <- rep(0.2, n_transition)
+        trans_prob_fallback <- convert_to_valid_probs(trans_prob_fallback, diag_probs = FALSE)
+      }
       
       if (model_type == "constant") {
         fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback)
@@ -346,14 +403,26 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
         fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback, A_fallback, B_fallback)
       }
       
+      # Set attributes for fallback vector
+      fallback_vector <- set_parameter_attributes(
+        par = fallback_vector,
+        K = K,
+        model_type = model_type,
+        diag_probs = diag_probs,
+        equal_variances = equal_variances,
+        parameterization = "natural"
+      )
+      
       starting_points[[i]] <<- fallback_vector
     })
   }
   
-  # Add metadata
+  # Add metadata about the generation process
   attr(starting_points, "generation_info") <- list(
     K = K,
     model_type = model_type,
+    diag_probs = diag_probs,
+    equal_variances = equal_variances,
     n_starts = n_starts,
     data_characteristics = list(
       n_obs = length(y_clean),

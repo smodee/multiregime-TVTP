@@ -50,3 +50,9 @@ rsconnect/
 
 # Results
 results/*
+
+# Claude Code
+.claude/
+
+# Legacy HMMGAS package (external dependency)
+legacy/Bazzi HMMGAS/

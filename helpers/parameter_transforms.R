@@ -1,657 +1,379 @@
-# Logit/logistic functions are needed from the utility_functions script
+#' Parameter Transformation Functions for Multi-Regime TVTP Models
+#' 
+#' This file provides robust parameter handling with attribute-based metadata
+#' system that eliminates the need for fragile length-based inference.
+#'
+#' PARAMETER VECTOR STRUCTURE AND ATTRIBUTES
+#' =========================================
+#' 
+#' All parameter vectors in this system carry metadata as R attributes:
+#'
+#' CORE ATTRIBUTES (required for all parameter vectors):
+#' - K: Number of regimes (integer, >= 2)
+#' - model_type: One of "constant", "tvp", "exogenous", "gas"
+#' - diag_probs: TRUE for diagonal transition probabilities, FALSE for off-diagonal
+#' - equal_variances: TRUE for single shared variance, FALSE for K separate variances
+#'
+#' STATE TRACKING ATTRIBUTES:
+#' - parameterization: "natural" (original space) or "transformed" (unconstrained space)
+#' - parameter_structure: Named list with start/end indices for each component
+#' - original_length: Length before transformations (for validation)
+#'
+#' PARAMETER VECTOR LAYOUT:
+#' ========================
+#' 
+#' All models follow this structure in natural space:
+#' [mu_1, ..., mu_K, sigma2_components, transition_components, time_varying_components]
+#'
+#' Where:
+#' - mu_components: Always K mean parameters
+#' - sigma2_components: K parameters (equal_variances=FALSE) or 1 parameter (equal_variances=TRUE)
+#' - transition_components: K parameters (diag_probs=TRUE) or K*(K-1) parameters (diag_probs=FALSE)
+#' - time_varying_components: Depends on model_type
+#'   * "constant": none
+#'   * "tvp", "exogenous": A coefficients (matching transition_components length)
+#'   * "gas": A coefficients + B coefficients (both matching transition_components length)
+#'
+#' DIAGONAL VS OFF-DIAGONAL TRANSITION PROBABILITIES:
+#' ==================================================
+#' 
+#' diag_probs = TRUE (diagonal parameterization):
+#'   - K parameters representing p11, p22, ..., pKK
+#'   - Off-diagonal probabilities equal within each row: pij = (1-pii)/(K-1) for i≠j
+#'   - Compatible with original simulation.R implementation for K=2
+#'
+#' diag_probs = FALSE (off-diagonal parameterization):  
+#'   - K*(K-1) parameters representing all off-diagonal transition probabilities
+#'   - Diagonal probabilities calculated as: pii = 1 - sum(pij for j≠i)
+#'   - Default for new implementation, supports arbitrary transition structures
+#'
+#' EXAMPLES:
+#' =========
+#' 
+#' # 2-regime constant model with diagonal probs (matches original simulation.R)
+#' par <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)  # mu1, mu2, sig1, sig2, p11, p22
+#' par <- set_parameter_attributes(par, K=2, model_type="constant", 
+#'                                 diag_probs=TRUE, equal_variances=FALSE)
+#'
+#' # 3-regime TVP model with off-diagonal probs and equal variances
+#' par <- c(-2, 0, 2, 0.5, 0.1,0.1,0.1,0.1,0.1,0.1, 0.05,0.05,0.05,0.05,0.05,0.05)
+#' par <- set_parameter_attributes(par, K=3, model_type="tvp",
+#'                                 diag_probs=FALSE, equal_variances=TRUE)
+
+# Load required helper functions
 source("helpers/utility_functions.R")
 
-#' Extract mean parameters from a parameter vector
+#' Set parameter vector attributes with validation
 #'
-#' @param par Parameter vector
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Vector of mean parameters (length K)
+#' @param par Numeric parameter vector
+#' @param K Number of regimes
+#' @param model_type Model type ("constant", "tvp", "exogenous", "gas")
+#' @param diag_probs TRUE for diagonal transition probs, FALSE for off-diagonal
+#' @param equal_variances TRUE for shared variance, FALSE for separate variances
+#' @param parameterization "natural" or "transformed" space
+#' @return Parameter vector with proper attributes set
 #' @details
-#' For all model types, the mean parameters are the first K elements of the parameter vector.
-#'
-#' @examples
-#' par <- c(1, 2, 3, 0.1, 0.2, 0.3)  # 3-regime constant model
-#' mean_from_par(par, "constant")  # Returns c(1, 2, 3)
-#' 
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)  # 2-regime GAS
-#' mean_from_par(par_gas, "gas")  # Returns c(-1, 1)
-mean_from_par <- function(par, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
+#' This is the main function for creating properly attributed parameter vectors.
+#' It validates the configuration and vector length, then sets all required attributes.
+set_parameter_attributes <- function(par, K, model_type = c("constant", "tvp", "exogenous", "gas"),
+                                     diag_probs = FALSE, equal_variances = FALSE, 
+                                     parameterization = c("natural", "transformed")) {
+  
+  # Input validation
   if (!is.numeric(par) || length(par) == 0) {
     stop("Parameter vector must be a non-empty numeric vector")
+  }
+  if (!is.numeric(K) || K < 2 || K != round(K)) {
+    stop("K must be an integer >= 2")
   }
   
   model_type <- match.arg(model_type)
-  K <- count_regime(par, model_type)
+  parameterization <- match.arg(parameterization)
   
-  return(par[1:K])
-}
-
-#' Extract variance parameters from a parameter vector
-#'
-#' @param par Parameter vector
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Vector of variance parameters (length K)
-#' @details
-#' For all model types, the variance parameters are elements (K+1) to (2K) of the parameter vector.
-#'
-#' @examples
-#' par <- c(1, 2, 3, 0.1, 0.2, 0.3)  # 3-regime constant model
-#' sigma2_from_par(par, "constant")  # Returns c(0.1, 0.2, 0.3)
-#' 
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)  # 2-regime GAS
-#' sigma2_from_par(par_gas, "gas")  # Returns c(0.5, 0.5)
-sigma2_from_par <- function(par, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
-  
-  model_type <- match.arg(model_type)
-  K <- count_regime(par, model_type)
-  
-  return(par[(K+1):(2*K)])
-}
-
-#' Extract transition probability parameters from a parameter vector
-#'
-#' @param par Parameter vector
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Vector of transition probability parameters (length K*(K-1))
-#' @details
-#' For all models with transitions (including constant models), the transition 
-#' probability parameters are elements (2K+1) to (2K + K*(K-1)) of the parameter vector.
-#' For constant models, these are fixed transition probabilities.
-#' For other models, these are initial/baseline transition probabilities.
-#'
-#' @examples
-#' par_const <- c(1, 2, 0.1, 0.2, 0.3, 0.4)  # 2-regime constant model
-#' transp_from_par(par_const, "constant")  # Returns c(0.3, 0.4)
-#' 
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)  # 2-regime GAS
-#' transp_from_par(par_gas, "gas")  # Returns c(0.3, 0.4)
-transp_from_par <- function(par, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
-  
-  model_type <- match.arg(model_type)
-  
-  K <- count_regime(par, model_type)
-  n_transition <- K * (K - 1)
-  
-  return(par[(2*K+1):(2*K + n_transition)])
-}
-
-#' Extract A coefficients from a parameter vector
-#'
-#' @param par Parameter vector
-#' @param model_type Type of model ("tvp", "exogenous", "gas") - not applicable for "constant"
-#' @return Vector of A coefficients (length K*(K-1))
-#' @details
-#' For models with time-varying transitions, the A coefficients control the
-#' sensitivity of transitions to driving variables (observations, exogenous variables, or scores).
-#' Not applicable for constant models.
-#' 
-#' - TVP: sensitivity to lagged observations
-#' - Exogenous: sensitivity to exogenous variables  
-#' - GAS: sensitivity to scaled scores
-#'
-#' @examples
-#' par_tvp <- c(1, 2, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2)  # 2-regime TVP model
-#' A_from_par(par_tvp, "tvp")  # Returns c(0.1, 0.2)
-#' 
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)  # 2-regime GAS
-#' A_from_par(par_gas, "gas")  # Returns c(0.1, 0.2)
-A_from_par <- function(par, model_type = c("tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
-  
-  model_type <- match.arg(model_type)
-  
-  if (model_type == "constant") {
-    stop("A coefficients are not applicable for constant models")
-  }
-  
-  K <- count_regime(par, model_type)
-  n_transition <- K * (K - 1)
-  
-  # For TVP and exogenous: A coefficients are after transitions
-  # For GAS: A coefficients are after transitions (B coefficients come after A)
-  start_idx <- 2*K + n_transition + 1
-  end_idx <- 2*K + 2*n_transition
-  
-  return(par[start_idx:end_idx])
-}
-
-#' Extract B coefficients from a parameter vector (GAS model only)
-#'
-#' @param par Parameter vector
-#' @param model_type Must be "gas" - B coefficients only exist in GAS models
-#' @return Vector of B coefficients (length K*(K-1))
-#' @details
-#' B coefficients control the persistence/memory in GAS models. They determine
-#' how much the previous time-varying parameter value influences the current value.
-#' Only applicable to GAS models.
-#'
-#' @examples
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)  # 2-regime GAS
-#' B_from_par(par_gas, "gas")  # Returns c(0.8, 0.9)
-B_from_par <- function(par, model_type = "gas") {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
-  
-  if (model_type != "gas") {
-    stop("B coefficients are only applicable for GAS models")
-  }
-  
-  K <- count_regime(par, model_type)
-  n_transition <- K * (K - 1)
-  
-  # B coefficients are the last K*(K-1) elements in GAS models
-  start_idx <- 2*K + 2*n_transition + 1
-  end_idx <- 2*K + 3*n_transition
-  
-  return(par[start_idx:end_idx])
-}
-
-#' Count the number of regimes from parameter vector length
-#'
-#' @param par Parameter vector
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Number of regimes (K)
-#' @details
-#' Determines the number of regimes based on the parameter vector length
-#' and the specified model type. Each model type has a different parameter
-#' structure:
-#' 
-#' - constant: K means + K variances + K*(K-1) transitions = K + K²
-#' - tvp: K means + K variances + K*(K-1) transitions + K*(K-1) A = 2K²
-#' - exogenous: K means + K variances + K*(K-1) transitions + K*(K-1) A = 2K²
-#' - gas: K means + K variances + K*(K-1) transitions + K*(K-1) A + K*(K-1) B = 3K² - K
-#'
-#' @examples
-#' # For a 3-regime constant model (12 parameters: 3 means + 3 variances + 6 transitions)
-#' par_const <- c(1, 2, 3, 0.1, 0.2, 0.3, 0.3, 0.4, 0.2, 0.5, 0.1, 0.6)
-#' count_regime(par_const, "constant")  # Returns 3
-#' 
-#' # For a 2-regime GAS model (14 parameters total)
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)
-#' count_regime(par_gas, "gas")  # Returns 2
-count_regime <- function(par, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
-  
-  if (has_invalid_values(par)) {
-    stop("Parameter vector contains invalid values (NA, NaN, or Inf)")
-  }
-  
-  # Match and validate model type
-  model_type <- match.arg(model_type)
-  
-  # Calculate K based on model type
-  K <- switch(model_type,
-              "constant" = {
-                # K means + K variances + K*(K-1) transitions = K + K²
-                # So: K² + K - length(par) = 0
-                # Using quadratic formula: K = (-1 + sqrt(1 + 4*length(par)))/2
-                discriminant <- 1 + 4*length(par)
-                if (discriminant < 0) {
-                  stop("Invalid parameter vector length for constant model (discriminant < 0)")
-                }
-                (-1 + sqrt(discriminant))/2
-              },
-              "tvp" = {
-                # K means + K variances + K*(K-1) transitions + K*(K-1) A = 2K²
-                # So: 2K² = length(par) => K = sqrt(length(par)/2)
-                sqrt(length(par)/2)
-              },
-              "exogenous" = {
-                # K means + K variances + K*(K-1) transitions + K*(K-1) A = 2K²
-                # So: 2K² = length(par) => K = sqrt(length(par)/2)
-                sqrt(length(par)/2)
-              },
-              "gas" = {
-                # K means + K variances + K*(K-1) transitions + K*(K-1) A + K*(K-1) B = 3K² - K
-                # So: 3K² - K - length(par) = 0
-                # Using quadratic formula: K = (1 + sqrt(1 + 12*length(par)))/6
-                discriminant <- 1 + 12*length(par)
-                if (discriminant < 0) {
-                  stop("Invalid parameter vector length for GAS model (discriminant < 0)")
-                }
-                (1 + sqrt(discriminant))/6
-              }
-  )
-  
-  # Validate that K is a positive integer
-  if (!is.finite(K) || K <= 0) {
-    stop(paste("Invalid parameter vector length", length(par), 
-               "for model type", model_type, "- calculated K =", K))
-  }
-  
-  if (abs(K - round(K)) > 1e-10) {
-    stop(paste("Invalid parameter vector length", length(par), 
-               "for model type", model_type, 
-               "- does not correspond to an integer number of regimes.",
-               "Calculated K =", K))
-  }
-  
-  K_int <- round(K)
-  
-  # Additional validation: verify the parameter count is correct
-  expected_length <- switch(model_type,
-                            "constant" = K_int + K_int^2,
-                            "tvp" = 2 * K_int^2,
-                            "exogenous" = 2 * K_int^2,
-                            "gas" = 3 * K_int^2 - K_int
-  )
-  
+  # Validate vector length against configuration
+  expected_length <- calculate_expected_length(K, model_type, diag_probs, equal_variances)
   if (length(par) != expected_length) {
-    stop(paste("Parameter vector length", length(par), 
-               "does not match expected length", expected_length,
-               "for", K_int, "regimes with model type", model_type))
+    stop(sprintf("Parameter vector length (%d) doesn't match expected length (%d) for configuration: K=%d, model_type='%s', diag_probs=%s, equal_variances=%s",
+                 length(par), expected_length, K, model_type, diag_probs, equal_variances))
   }
   
-  return(K_int)
+  # Set core attributes
+  attr(par, "K") <- as.integer(K)
+  attr(par, "model_type") <- model_type
+  attr(par, "diag_probs") <- as.logical(diag_probs)
+  attr(par, "equal_variances") <- as.logical(equal_variances)
+  attr(par, "parameterization") <- parameterization
+  
+  # Calculate and set parameter structure
+  structure <- calculate_parameter_structure(K, model_type, diag_probs, equal_variances)
+  attr(par, "parameter_structure") <- structure
+  
+  # Set metadata
+  attr(par, "original_length") <- length(par)
+  
+  return(par)
 }
 
-#' Validate parameter vector structure and values
+#' Calculate expected parameter vector length for given configuration
 #'
-#' @param par Parameter vector to validate
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @param K Optional: number of regimes (will be inferred if not provided)
-#' @return TRUE if valid, otherwise throws an error with detailed explanation
-#' @details
-#' Performs comprehensive validation of parameter vector including:
-#' - Correct length for the specified model type
-#' - Positive variance parameters
-#' - Valid probability ranges for transition parameters (if applicable)
-#' - Valid coefficient ranges for A and B parameters (if applicable)
+#' @param K Number of regimes  
+#' @param model_type Model type
+#' @param diag_probs Diagonal transition probabilities flag
+#' @param equal_variances Equal variances flag
+#' @return Expected parameter vector length
+calculate_expected_length <- function(K, model_type, diag_probs, equal_variances) {
+  
+  # Mean parameters: always K
+  n_mu <- K
+  
+  # Variance parameters: K or 1 depending on equal_variances
+  n_sigma2 <- ifelse(equal_variances, 1, K)
+  
+  # Transition parameters: K (diagonal) or K*(K-1) (off-diagonal)
+  n_trans <- ifelse(diag_probs, K, K * (K - 1))
+  
+  # Time-varying parameters depend on model type
+  n_timevarying <- switch(model_type,
+                          "constant" = 0,
+                          "tvp" = n_trans,      # A coefficients matching transition structure
+                          "exogenous" = n_trans, # A coefficients matching transition structure  
+                          "gas" = 2 * n_trans   # A + B coefficients matching transition structure
+  )
+  
+  return(n_mu + n_sigma2 + n_trans + n_timevarying)
+}
+
+#' Calculate parameter structure indices for given configuration
 #'
-#' @examples
-#' # Valid parameter vector for 2-regime constant model
-#' par_const <- c(1, 2, 0.1, 0.2, 0.3, 0.4)  # 2 means + 2 variances + 2 transitions
-#' validate_parameter_vector(par_const, "constant")  # Returns TRUE
-#' 
-#' # Valid parameter vector for 2-regime GAS model
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)
-#' validate_parameter_vector(par_gas, "gas")  # Returns TRUE
-#'
-#' @param par Parameter vector to validate
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @param K Optional: number of regimes (will be inferred if not provided)
-#' @return TRUE if valid, otherwise throws an error with detailed explanation
-validate_parameter_vector <- function(par, model_type = c("constant", "tvp", "exogenous", "gas"), K = NULL) {
-  # Validate basic inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
-  }
+#' @param K Number of regimes
+#' @param model_type Model type  
+#' @param diag_probs Diagonal transition probabilities flag
+#' @param equal_variances Equal variances flag
+#' @return Named list with start/end indices for each parameter component
+calculate_parameter_structure <- function(K, model_type, diag_probs, equal_variances) {
   
-  if (has_invalid_values(par)) {
-    stop("Parameter vector contains invalid values (NA, NaN, or Inf)")
-  }
+  structure <- list()
+  current_idx <- 1
   
-  model_type <- match.arg(model_type)
+  # Mean parameters
+  structure$mu <- list(start = current_idx, end = current_idx + K - 1)
+  current_idx <- current_idx + K
   
-  # Determine or validate K
-  if (is.null(K)) {
-    tryCatch({
-      K <- count_regime(par, model_type)
-    }, error = function(e) {
-      stop("Invalid parameter vector length for model type '", model_type, "'. ", e$message)
-    })
-  } else {
-    # Validate provided K
-    if (!is.numeric(K) || length(K) != 1 || K != as.integer(K) || K < 1) {
-      stop("K must be a positive integer")
-    }
-    K <- as.integer(K)
-    
-    # Check if parameter vector length matches expected length for this K
-    expected_length <- switch(model_type,
-                              "constant" = K + K^2,
-                              "tvp" = 2 * K^2,
-                              "exogenous" = 2 * K^2,
-                              "gas" = 3 * K^2 - K
-    )
-    
-    if (length(par) != expected_length) {
-      stop("Parameter vector length (", length(par), ") does not match expected length (", 
-           expected_length, ") for ", K, " regimes with model type '", model_type, "'")
-    }
-  }
+  # Variance parameters
+  n_sigma2 <- ifelse(equal_variances, 1, K)
+  structure$sigma2 <- list(start = current_idx, end = current_idx + n_sigma2 - 1)
+  current_idx <- current_idx + n_sigma2
   
-  # Extract and validate variance parameters
-  tryCatch({
-    sigma2 <- sigma2_from_par(par, model_type)
-    if (any(sigma2 <= 0)) {
-      bad_variances <- sigma2[sigma2 <= 0]
-      stop("All variance parameters must be positive. Found non-positive values: ", 
-           paste(round(bad_variances, 6), collapse = ", "))
-    }
-  }, error = function(e) {
-    if (grepl("must be positive", e$message)) {
-      stop(e$message)  # Re-throw our own error
-    } else {
-      stop("Error in variance parameter extraction: ", e$message)
-    }
-  })
+  # Transition parameters
+  n_trans <- ifelse(diag_probs, K, K * (K - 1))
+  structure$trans_prob <- list(start = current_idx, end = current_idx + n_trans - 1)
+  current_idx <- current_idx + n_trans
   
-  # Validate transition probabilities (all models have them)
-  tryCatch({
-    trans_prob <- transp_from_par(par, model_type)
-    
-    # Check for values outside [0,1] range
-    if (any(trans_prob < 0) || any(trans_prob > 1)) {
-      invalid_probs <- trans_prob[trans_prob < 0 | trans_prob > 1]
-      stop("Transition probabilities must be between 0 and 1. Found invalid values: ", 
-           paste(round(invalid_probs, 6), collapse = ", "))
-    }
-  }, error = function(e) {
-    if (grepl("must be between 0 and 1", e$message)) {
-      stop(e$message)  # Re-throw our own error
-    } else {
-      stop("Error in transition probability extraction: ", e$message)
-    }
-  })
-  
-  # Additional validations for time-varying models
+  # Time-varying parameters
   if (model_type %in% c("tvp", "exogenous", "gas")) {
-    
-    # Validate A coefficients
-    tryCatch({
-      A_coeffs <- A_from_par(par, model_type)
-      # Note: A coefficients can theoretically be any real number, but warn about extreme values
-      if (any(abs(A_coeffs) > 10)) {
-        extreme_A <- A_coeffs[abs(A_coeffs) > 10]
-        warning("Some A coefficients are quite large (|A| > 10): ", 
-                paste(round(extreme_A, 6), collapse = ", "), 
-                ". This may cause numerical instability.")
-      }
-    }, error = function(e) {
-      stop("Error in A coefficient extraction: ", e$message)
-    })
-    
-    # Additional GAS-specific validation
-    if (model_type == "gas") {
-      tryCatch({
-        B_coeffs <- B_from_par(par, model_type)
-        
-        # B coefficients should typically be between 0 and 1 for stability
-        if (any(B_coeffs < 0) || any(B_coeffs > 1)) {
-          invalid_B <- B_coeffs[B_coeffs < 0 | B_coeffs > 1]
-          warning("B coefficients are typically between 0 and 1 for stability. Found: ", 
-                  paste(round(invalid_B, 6), collapse = ", "))
-        }
-        
-        # Check for explosive behavior: |A| + |B| should typically be < 1 for each parameter
-        A_coeffs <- A_from_par(par, model_type)  # Get A coeffs again
-        combined_coeffs <- abs(A_coeffs) + abs(B_coeffs)
-        if (any(combined_coeffs > 1.5)) {
-          explosive_idx <- which(combined_coeffs > 1.5)
-          warning("Some parameter combinations |A| + |B| > 1.5 may cause explosive behavior. ",
-                  "Indices: ", paste(explosive_idx, collapse = ", "))
-        }
-      }, error = function(e) {
-        stop("Error in B coefficient extraction: ", e$message)
-      })
-    }
+    structure$A <- list(start = current_idx, end = current_idx + n_trans - 1)
+    current_idx <- current_idx + n_trans
   }
   
-  # If we reach here, all validations passed
+  if (model_type == "gas") {
+    structure$B <- list(start = current_idx, end = current_idx + n_trans - 1)
+    current_idx <- current_idx + n_trans
+  }
+  
+  return(structure)
+}
+
+#' Extract parameter component using attributes
+#'
+#' @param par Parameter vector with attributes
+#' @param component Component name ("mu", "sigma2", "trans_prob", "A", "B")
+#' @return Extracted parameter component
+#' @details
+#' Uses the parameter_structure attribute to extract components safely.
+#' Much more robust than the old index-based extraction.
+extract_parameter_component <- function(par, component) {
+  
+  # Validate parameter vector has required attributes
+  validate_parameter_attributes(par)
+  
+  structure <- attr(par, "parameter_structure")
+  
+  if (!component %in% names(structure)) {
+    model_type <- attr(par, "model_type")
+    stop(sprintf("Component '%s' not available for model type '%s'", component, model_type))
+  }
+  
+  comp_info <- structure[[component]]
+  return(par[comp_info$start:comp_info$end])
+}
+
+#' Validate parameter vector has required attributes
+#'
+#' @param par Parameter vector to validate
+#' @return TRUE if valid, throws error if not
+validate_parameter_attributes <- function(par) {
+  
+  required_attrs <- c("K", "model_type", "diag_probs", "equal_variances", 
+                      "parameterization", "parameter_structure")
+  
+  missing_attrs <- required_attrs[!sapply(required_attrs, function(x) !is.null(attr(par, x)))]
+  
+  if (length(missing_attrs) > 0) {
+    stop(sprintf("Parameter vector missing required attributes: %s", 
+                 paste(missing_attrs, collapse = ", ")))
+  }
+  
+  # Validate attribute types and ranges
+  K <- attr(par, "K")
+  if (!is.integer(K) || K < 2) {
+    stop("Attribute 'K' must be an integer >= 2")
+  }
+  
+  model_type <- attr(par, "model_type")
+  if (!model_type %in% c("constant", "tvp", "exogenous", "gas")) {
+    stop("Attribute 'model_type' must be one of: constant, tvp, exogenous, gas")
+  }
+  
+  parameterization <- attr(par, "parameterization")
+  if (!parameterization %in% c("natural", "transformed")) {
+    stop("Attribute 'parameterization' must be 'natural' or 'transformed'")
+  }
+  
   return(TRUE)
 }
 
 #' Transform parameters from natural space to unconstrained space
 #'
-#' @param par Parameters in their natural space
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Parameters in unconstrained space suitable for optimization
+#' @param par Parameter vector with attributes in natural space
+#' @return Parameter vector with attributes in transformed space
 #' @details
-#' Applies transformations to make parameters suitable for unconstrained optimization:
+#' Applies transformations suitable for unconstrained optimization:
 #' - Log transformation for variances (ensures positivity)
-#' - Logit transformation for transition probabilities (ensures [0,1] range)
-#' - Logit transformation for A and B coefficients in time-varying models (ensures [0,1] range)
-#' 
-#' All models: means remain unchanged, variances → log(variances), transitions → logit(transitions)
-#' Time-varying models additionally: A → logit(A), B → logit(B) (GAS only)
-#'
-#' @examples
-#' # Transform 2-regime constant model parameters
-#' par_const <- c(1, 2, 0.1, 0.2, 0.3, 0.4)
-#' par_transformed <- transform_parameters(par_const, "constant")
-#' 
-#' # Transform 2-regime GAS model parameters  
-#' par_gas <- c(-1, 1, 0.5, 0.5, 0.3, 0.4, 0.1, 0.2, 0.8, 0.9)
-#' par_transformed <- transform_parameters(par_gas, "gas")
-transform_parameters <- function(par, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par) || length(par) == 0) {
-    stop("Parameter vector must be a non-empty numeric vector")
+#' - Logit transformation for probabilities and coefficients (ensures [0,1] range)
+#' - Preserves all attributes, updates parameterization to "transformed"
+transform_parameters <- function(par) {
+  
+  # Validate input
+  validate_parameter_attributes(par)
+  
+  if (attr(par, "parameterization") != "natural") {
+    stop("Can only transform parameters from natural space")
   }
   
-  model_type <- match.arg(model_type)
+  # Extract components using robust attribute-based extraction
+  mu <- extract_parameter_component(par, "mu")
+  sigma2 <- extract_parameter_component(par, "sigma2")
+  trans_prob <- extract_parameter_component(par, "trans_prob")
   
-  # Get the number of regimes
-  K <- count_regime(par, model_type)
+  model_type <- attr(par, "model_type")
   
-  # Extract parameter components
-  mu <- mean_from_par(par, model_type)
-  sigma2 <- sigma2_from_par(par, model_type)
-  
-  # Check for invalid values before transformation
+  # Validate bounds before transformation
   if (any(sigma2 <= 0)) {
-    stop("Variance parameters must be positive for transformation. Found: ", 
-         paste(sigma2[sigma2 <= 0], collapse = ", "))
+    stop("Variance parameters must be positive for transformation")
   }
-  
-  # Transform basic parameters (all models have these)
-  mu_t <- mu  # Means remain unchanged
-  sigma2_t <- log(sigma2)  # Log transformation for variances
-  
-  # Handle transition probabilities (all models have these)
-  trans_prob <- transp_from_par(par, model_type)
-  
-  # Check transition probability bounds
   if (any(trans_prob <= 0) || any(trans_prob >= 1)) {
-    stop("Transition probabilities must be strictly between 0 and 1 for transformation. Found: ",
-         paste(trans_prob[trans_prob <= 0 | trans_prob >= 1], collapse = ", "))
+    stop("Transition probabilities must be strictly between 0 and 1")
   }
   
-  trans_prob_t <- logit(trans_prob)  # Logit transformation for probabilities
+  # Apply transformations
+  mu_t <- mu  # Means unchanged
+  sigma2_t <- log(sigma2)  # Log transformation
+  trans_prob_t <- logit(trans_prob)  # Logit transformation
   
-  # Build transformed parameter vector based on model type
-  if (model_type == "constant") {
-    # Constant model: mu + sigma2 + transitions
-    par_transformed <- c(mu_t, sigma2_t, trans_prob_t)
-    
-  } else if (model_type %in% c("tvp", "exogenous")) {
-    # TVP/Exogenous models: mu + sigma2 + transitions + A
-    A_coeffs <- A_from_par(par, model_type)
-    
-    # Check A coefficient bounds  
-    if (any(A_coeffs < 0) || any(A_coeffs > 1)) {
-      stop("A coefficients must be between 0 and 1 for transformation. Found: ",
-           paste(A_coeffs[A_coeffs < 0 | A_coeffs > 1], collapse = ", "))
+  # Build transformed vector
+  par_t <- c(mu_t, sigma2_t, trans_prob_t)
+  
+  # Handle time-varying components if present
+  if (model_type %in% c("tvp", "exogenous", "gas")) {
+    A <- extract_parameter_component(par, "A")
+    if (any(A <= 0) || any(A >= 1)) {
+      stop("A coefficients must be strictly between 0 and 1")
     }
-    
-    A_coeffs_t <- logit(A_coeffs)  # Logit transformation for A coefficients
-    par_transformed <- c(mu_t, sigma2_t, trans_prob_t, A_coeffs_t)
-    
-  } else if (model_type == "gas") {
-    # GAS model: mu + sigma2 + transitions + A + B
-    A_coeffs <- A_from_par(par, model_type)
-    B_coeffs <- B_from_par(par, model_type)
-    
-    # Check A coefficient bounds
-    if (any(A_coeffs < 0) || any(A_coeffs > 1)) {
-      stop("A coefficients must be between 0 and 1 for transformation. Found: ",
-           paste(A_coeffs[A_coeffs < 0 | A_coeffs > 1], collapse = ", "))
-    }
-    
-    # Check B coefficient bounds
-    if (any(B_coeffs < 0) || any(B_coeffs > 1)) {
-      stop("B coefficients must be between 0 and 1 for transformation. Found: ",
-           paste(B_coeffs[B_coeffs < 0 | B_coeffs > 1], collapse = ", "))
-    }
-    
-    A_coeffs_t <- logit(A_coeffs)  # Logit transformation for A coefficients
-    B_coeffs_t <- logit(B_coeffs)  # Logit transformation for B coefficients
-    par_transformed <- c(mu_t, sigma2_t, trans_prob_t, A_coeffs_t, B_coeffs_t)
+    A_t <- logit(A)
+    par_t <- c(par_t, A_t)
   }
   
-  # Add attributes to preserve model information
-  attr(par_transformed, "model_type") <- model_type
-  attr(par_transformed, "K") <- K
-  attr(par_transformed, "original_length") <- length(par)
+  if (model_type == "gas") {
+    B <- extract_parameter_component(par, "B")
+    if (any(B <= 0) || any(B >= 1)) {
+      stop("B coefficients must be strictly between 0 and 1")
+    }
+    B_t <- logit(B)
+    par_t <- c(par_t, B_t)
+  }
   
-  return(par_transformed)
+  # Copy all attributes and update parameterization
+  attributes(par_t) <- attributes(par)
+  attr(par_t, "parameterization") <- "transformed"
+  
+  return(par_t)
 }
 
 #' Transform parameters from unconstrained space back to natural space
 #'
-#' @param par_t Parameters in unconstrained space (from transform_parameters)
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Parameters in their natural space
-#' @details
-#' Applies inverse transformations to convert parameters back to their natural bounds:
-#' - Exp transformation for log-variances (ensures positivity)
-#' - Logistic transformation for logit-probabilities (ensures [0,1] range)
-#' - Logistic transformation for logit-coefficients (ensures [0,1] range)
-#' 
-#' This function is the inverse of transform_parameters().
-#'
-#' @examples
-#' # Transform back from unconstrained space
-#' par_const_orig <- c(1, 2, 0.1, 0.2, 0.3, 0.4)
-#' par_transformed <- transform_parameters(par_const_orig, "constant")
-#' par_recovered <- untransform_parameters(par_transformed, "constant")
-#' # par_recovered should equal par_const_orig
-untransform_parameters <- function(par_t, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  # Validate inputs
-  if (!is.numeric(par_t) || length(par_t) == 0) {
-    stop("Transformed parameter vector must be a non-empty numeric vector")
+#' @param par_t Parameter vector with attributes in transformed space
+#' @return Parameter vector with attributes in natural space
+untransform_parameters <- function(par_t) {
+  
+  # Validate input
+  validate_parameter_attributes(par_t)
+  
+  if (attr(par_t, "parameterization") != "transformed") {
+    stop("Can only untransform parameters from transformed space")
   }
   
-  model_type <- match.arg(model_type)
+  # Extract components  
+  mu_t <- extract_parameter_component(par_t, "mu")
+  sigma2_t <- extract_parameter_component(par_t, "sigma2")
+  trans_prob_t <- extract_parameter_component(par_t, "trans_prob")
   
-  # Try to get K from attributes first, then infer from length
-  K <- attr(par_t, "K")
-  if (is.null(K)) {
-    # Infer K from parameter vector length and model type
-    expected_lengths <- switch(model_type,
-                               "constant" = function(K) K + K^2,
-                               "tvp" = function(K) 2 * K^2,
-                               "exogenous" = function(K) 2 * K^2, 
-                               "gas" = function(K) 3 * K^2 - K
-    )
-    
-    # Find K that gives the correct length
-    for (K_test in 1:10) {  # Reasonable upper bound
-      if (expected_lengths(K_test) == length(par_t)) {
-        K <- K_test
-        break
-      }
-    }
-    
-    if (is.null(K)) {
-      stop("Cannot determine number of regimes from parameter vector length ", 
-           length(par_t), " for model type '", model_type, "'")
-    }
+  model_type <- attr(par_t, "model_type")
+  
+  # Apply inverse transformations
+  mu <- mu_t  # Means unchanged
+  sigma2 <- exp(sigma2_t)  # Exp transformation
+  trans_prob <- logistic(trans_prob_t)  # Logistic transformation
+  
+  # Build natural vector
+  par <- c(mu, sigma2, trans_prob)
+  
+  # Handle time-varying components if present
+  if (model_type %in% c("tvp", "exogenous", "gas")) {
+    A_t <- extract_parameter_component(par_t, "A")
+    A <- logistic(A_t)
+    par <- c(par, A)
   }
   
-  # Calculate parameter structure
-  n_transition <- K * (K - 1)
-  
-  # Extract and untransform parameter components based on model type
-  if (model_type == "constant") {
-    # Structure: [mu, log_sigma2, logit_trans]
-    mu_t <- par_t[1:K]
-    sigma2_t <- par_t[(K+1):(2*K)]
-    trans_prob_t <- par_t[(2*K+1):(2*K + n_transition)]
-    
-    # Untransform
-    mu <- mu_t  # Means unchanged
-    sigma2 <- exp(sigma2_t)  # Exp transformation for variances
-    trans_prob <- logistic(trans_prob_t)  # Logistic transformation for probabilities
-    
-    par_natural <- c(mu, sigma2, trans_prob)
-    
-  } else if (model_type %in% c("tvp", "exogenous")) {
-    # Structure: [mu, log_sigma2, logit_trans, logit_A]
-    mu_t <- par_t[1:K]
-    sigma2_t <- par_t[(K+1):(2*K)]
-    trans_prob_t <- par_t[(2*K+1):(2*K + n_transition)]
-    A_coeffs_t <- par_t[(2*K + n_transition + 1):(2*K + 2*n_transition)]
-    
-    # Untransform
-    mu <- mu_t  # Means unchanged
-    sigma2 <- exp(sigma2_t)  # Exp transformation for variances
-    trans_prob <- logistic(trans_prob_t)  # Logistic transformation for probabilities
-    A_coeffs <- logistic(A_coeffs_t)  # Logistic transformation for A coefficients
-    
-    par_natural <- c(mu, sigma2, trans_prob, A_coeffs)
-    
-  } else if (model_type == "gas") {
-    # Structure: [mu, log_sigma2, logit_trans, logit_A, logit_B]
-    mu_t <- par_t[1:K]
-    sigma2_t <- par_t[(K+1):(2*K)]
-    trans_prob_t <- par_t[(2*K+1):(2*K + n_transition)]
-    A_coeffs_t <- par_t[(2*K + n_transition + 1):(2*K + 2*n_transition)]
-    B_coeffs_t <- par_t[(2*K + 2*n_transition + 1):(2*K + 3*n_transition)]
-    
-    # Untransform
-    mu <- mu_t  # Means unchanged
-    sigma2 <- exp(sigma2_t)  # Exp transformation for variances  
-    trans_prob <- logistic(trans_prob_t)  # Logistic transformation for probabilities
-    A_coeffs <- logistic(A_coeffs_t)  # Logistic transformation for A coefficients
-    B_coeffs <- logistic(B_coeffs_t)  # Logistic transformation for B coefficients
-    
-    par_natural <- c(mu, sigma2, trans_prob, A_coeffs, B_coeffs)
+  if (model_type == "gas") {
+    B_t <- extract_parameter_component(par_t, "B")
+    B <- logistic(B_t)
+    par <- c(par, B)
   }
   
-  # Add attributes to preserve information
-  attr(par_natural, "model_type") <- model_type
-  attr(par_natural, "K") <- K
-  attr(par_natural, "transformed_length") <- length(par_t)
+  # Copy all attributes and update parameterization
+  attributes(par) <- attributes(par_t)
+  attr(par, "parameterization") <- "natural"
   
-  return(par_natural)
+  return(par)
 }
 
 #' Validate transformation round-trip consistency
 #'
-#' @param par Original parameters in natural space
-#' @param model_type Type of model
-#' @param tolerance Numerical tolerance for comparison (default: 1e-10)
-#' @return TRUE if transformation is consistent, otherwise throws an error
-#' @details
-#' Tests that transform_parameters() followed by untransform_parameters()
-#' recovers the original parameter values within numerical tolerance.
-#' Useful for testing and debugging transformation functions.
-#'
-#' @examples
-#' par_test <- c(1, 2, 0.1, 0.2, 0.3, 0.4)
-#' validate_transformation_consistency(par_test, "constant")
-validate_transformation_consistency <- function(par, model_type, tolerance = 1e-10) {
-  # Transform and untransform
-  par_transformed <- transform_parameters(par, model_type)
-  par_recovered <- untransform_parameters(par_transformed, model_type)
+#' @param par Parameter vector with attributes in natural space
+#' @param tolerance Numerical tolerance (default: 1e-10)
+#' @return TRUE if consistent, throws error otherwise
+validate_transformation_consistency <- function(par, tolerance = 1e-10) {
   
-  # Check consistency
+  # Round-trip transformation
+  par_t <- transform_parameters(par)
+  par_recovered <- untransform_parameters(par_t)
+  
+  # Compare values (attributes should be identical except parameterization)
   max_diff <- max(abs(par - par_recovered))
   
   if (max_diff > tolerance) {
-    stop("Transformation consistency check failed. Maximum difference: ", 
-         max_diff, " > tolerance: ", tolerance,
-         "\nOriginal: ", paste(round(par, 8), collapse = ", "),
-         "\nRecovered: ", paste(round(par_recovered, 8), collapse = ", "))
+    stop(sprintf("Transformation consistency failed. Max difference: %e > tolerance: %e",
+                 max_diff, tolerance))
   }
   
   cat("✓ Transformation consistency check passed (max diff:", 
@@ -660,134 +382,67 @@ validate_transformation_consistency <- function(par, model_type, tolerance = 1e-
   return(TRUE)
 }
 
-#' Compress variance parameters for equal variance constraint
+#' Print parameter vector structure information
 #'
-#' @param params Full parameter vector in natural space
-#' @param K Number of regimes
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Compressed parameter vector with single variance parameter
-#' @details
-#' Converts a parameter vector with K separate variance parameters to one with
-#' a single shared variance parameter. Used when equal_variances = TRUE.
-#' 
-#' The compression uses the mean of the K variance values to create the single
-#' shared variance parameter.
-#'
-#' @examples
-#' # TVP model with 3 regimes: [mu1, mu2, mu3, σ²1, σ²2, σ²3, trans..., A...]
-#' full_params <- c(-1, 0, 1, 0.5, 0.6, 0.4, rep(0.2, 6), rep(0.1, 6))
-#' compressed <- compress_variances(full_params, K = 3, "tvp")
-#' # Result: [mu1, mu2, mu3, σ²_avg, trans..., A...]
-compress_variances <- function(params, K, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  model_type <- match.arg(model_type)
+#' @param par Parameter vector with attributes
+print_parameter_info <- function(par) {
   
-  if (length(params) == 0) {
-    stop("Parameter vector cannot be empty")
+  validate_parameter_attributes(par)
+  
+  K <- attr(par, "K")
+  model_type <- attr(par, "model_type")
+  diag_probs <- attr(par, "diag_probs")
+  equal_variances <- attr(par, "equal_variances")
+  parameterization <- attr(par, "parameterization")
+  structure <- attr(par, "parameter_structure")
+  
+  cat("Parameter Vector Information\n")
+  cat("============================\n")
+  cat(sprintf("Length: %d\n", length(par)))
+  cat(sprintf("K (regimes): %d\n", K))
+  cat(sprintf("Model type: %s\n", model_type))
+  cat(sprintf("Transition probabilities: %s\n", ifelse(diag_probs, "diagonal", "off-diagonal")))
+  cat(sprintf("Variances: %s\n", ifelse(equal_variances, "equal", "separate")))
+  cat(sprintf("Parameterization: %s\n", parameterization))
+  cat("\nParameter structure:\n")
+  
+  for (comp_name in names(structure)) {
+    comp_info <- structure[[comp_name]]
+    comp_length <- comp_info$end - comp_info$start + 1
+    cat(sprintf("  %s: indices %d-%d (length %d)\n", 
+                comp_name, comp_info$start, comp_info$end, comp_length))
   }
   
-  # Extract components (using first variance as the representative value)
-  mu <- params[1:K]
-  sigma2_shared <- params[K+1]
-  
-  # Get remaining parameters (transition probs, A, B, etc.)
-  if (length(params) > 2*K) {
-    remaining <- params[(2*K+1):length(params)]
-    compressed_params <- c(mu, sigma2_shared, remaining)
-  } else {
-    compressed_params <- c(mu, sigma2_shared)
+  cat("\nParameter values:\n")
+  for (comp_name in names(structure)) {
+    comp_values <- extract_parameter_component(par, comp_name)
+    cat(sprintf("  %s: [%s]\n", comp_name, paste(round(comp_values, 4), collapse = ", ")))
   }
-  
-  # Add attributes to track the transformation
-  attr(compressed_params, "compressed") <- TRUE
-  attr(compressed_params, "original_K") <- K
-  attr(compressed_params, "model_type") <- model_type
-  attr(compressed_params, "original_length") <- length(params)
-  
-  return(compressed_params)
 }
 
-#' Expand single variance parameter to K regime-specific variances
-#'
-#' @param params Compressed parameter vector with single variance
-#' @param K Number of regimes  
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @return Full parameter vector with K identical variance parameters
-#' @details
-#' Converts a parameter vector with a single shared variance parameter back to
-#' one with K identical variance parameters. Used to restore the expected
-#' parameter structure after optimization with equal_variances = TRUE.
-#'
-#' @examples
-#' # Compressed TVP: [mu1, mu2, mu3, σ²_shared, trans..., A...]
-#' compressed <- c(-1, 0, 1, 0.5, rep(0.2, 6), rep(0.1, 6))
-#' expanded <- expand_variances(compressed, K = 3, "tvp")  
-#' # Result: [mu1, mu2, mu3, σ², σ², σ², trans..., A...]
-expand_variances <- function(params, K, model_type = c("constant", "tvp", "exogenous", "gas")) {
-  model_type <- match.arg(model_type)
-  
-  if (length(params) == 0) {
-    stop("Parameter vector cannot be empty")
-  }
-  
-  # Extract components
-  mu <- params[1:K]
-  sigma2_shared <- params[K+1]
-  
-  # Expand shared variance to K identical values
-  sigma2_expanded <- rep(sigma2_shared, K)
-  
-  # Get remaining parameters
-  if (length(params) > K+1) {
-    remaining <- params[(K+2):length(params)]
-    expanded_params <- c(mu, sigma2_expanded, remaining)
-  } else {
-    expanded_params <- c(mu, sigma2_expanded)
-  }
-  
-  # Add attributes to track the transformation
-  attr(expanded_params, "expanded") <- TRUE
-  attr(expanded_params, "target_K") <- K
-  attr(expanded_params, "model_type") <- model_type
-  
-  return(expanded_params)
+# Convenience wrapper functions for backward compatibility with existing code
+
+#' Extract mean parameters (backward compatibility)
+mean_from_par <- function(par) {
+  extract_parameter_component(par, "mu")
 }
 
-#' Check if parameter vector represents compressed variances
-#'
-#' @param params Parameter vector to check
-#' @return TRUE if parameters were compressed, FALSE otherwise
-#' @details
-#' Helper function to check if a parameter vector has been compressed
-#' using compress_variances(). Useful for conditional logic.
-is_compressed_variances <- function(params) {
-  return(!is.null(attr(params, "compressed")) && attr(params, "compressed"))
+#' Extract variance parameters (backward compatibility) 
+sigma2_from_par <- function(par) {
+  extract_parameter_component(par, "sigma2")
 }
 
-#' Calculate expected parameter length for compressed vs full parameterization
-#'
-#' @param K Number of regimes
-#' @param model_type Type of model ("constant", "tvp", "exogenous", "gas")
-#' @param equal_variances Whether variances are constrained to be equal
-#' @return Expected length of parameter vector
-#' @details
-#' Helper function to calculate the expected parameter vector length based on
-#' the model type and variance constraint setting.
-expected_param_length <- function(K, model_type = c("constant", "tvp", "exogenous", "gas"), 
-                                  equal_variances = FALSE) {
-  model_type <- match.arg(model_type)
-  
-  # Base lengths for unconstrained case
-  base_lengths <- switch(model_type,
-                         "constant" = K + K + K*(K-1),                    # mu + sigma2 + trans
-                         "tvp" = K + K + K*(K-1) + K*(K-1),               # mu + sigma2 + trans + A  
-                         "exogenous" = K + K + K*(K-1) + K*(K-1),         # mu + sigma2 + trans + A
-                         "gas" = K + K + K*(K-1) + K*(K-1) + K*(K-1)      # mu + sigma2 + trans + A + B
-  )
-  
-  # Adjust for variance constraint (saves K-1 parameters)
-  if (equal_variances) {
-    return(base_lengths - (K - 1))
-  } else {
-    return(base_lengths)
-  }
+#' Extract transition probabilities (backward compatibility)
+transp_from_par <- function(par) {
+  extract_parameter_component(par, "trans_prob")
+}
+
+#' Extract A coefficients (backward compatibility)
+A_from_par <- function(par) {
+  extract_parameter_component(par, "A")
+}
+
+#' Extract B coefficients (backward compatibility)
+B_from_par <- function(par) {
+  extract_parameter_component(par, "B")
 }
