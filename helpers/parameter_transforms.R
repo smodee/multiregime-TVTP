@@ -248,8 +248,11 @@ validate_parameter_attributes <- function(par) {
 #' @return Parameter vector with attributes in transformed space
 #' @details
 #' Applies transformations suitable for unconstrained optimization:
+#' - Means (mu): No transformation (already unbounded)
 #' - Log transformation for variances (ensures positivity)
-#' - Logit transformation for probabilities and coefficients (ensures [0,1] range)
+#' - Logit transformation for transition probabilities (ensures [0,1] range)
+#' - A coefficients: No transformation (unbounded, matching original HMMGAS)
+#' - B coefficients (GAS only): Logit transformation (ensures [0,1] range for persistence)
 #' - Preserves all attributes, updates parameterization to "transformed"
 transform_parameters <- function(par) {
   
@@ -286,10 +289,10 @@ transform_parameters <- function(par) {
   # Handle time-varying components if present
   if (model_type %in% c("tvp", "exogenous", "gas")) {
     A <- extract_parameter_component(par, "A")
-    if (any(A <= 0) || any(A >= 1)) {
-      stop("A coefficients must be strictly between 0 and 1")
-    }
-    A_t <- logit(A)
+    # A coefficients are unbounded (no transformation needed)
+    # This matches the original HMMGAS implementation where A can be any real number
+    # The logistic transformation on f already ensures valid probabilities
+    A_t <- A
     par_t <- c(par_t, A_t)
   }
   
@@ -340,7 +343,9 @@ untransform_parameters <- function(par_t) {
   # Handle time-varying components if present
   if (model_type %in% c("tvp", "exogenous", "gas")) {
     A_t <- extract_parameter_component(par_t, "A")
-    A <- logistic(A_t)
+    # A coefficients are unbounded (no transformation needed)
+    # This matches the original HMMGAS implementation
+    A <- A_t
     par <- c(par, A)
   }
   
