@@ -366,30 +366,17 @@ calculate_gas_score <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_trans,
   
   # Step 3: Calculate Fisher Information
   fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
-  
+
   # Step 4: Apply appropriate scaling method
   if (scaling_method == "original") {
-    # Use the original 2-regime methodology
-    g_vector <- attr(raw_score, "g_components")
-    if (is.null(g_vector)) {
-      # Recalculate g_vector if not available
-      g_vector <- numeric(K*(K-1))
-      idx <- 1
-      for (i in 1:K) {
-        for (j in 1:K) {
-          if (i != j) {
-            g_vector[idx] <- X_t_prev[i] * p_trans[idx] * (1 - p_trans[idx])
-            idx <- idx + 1
-          }
-        }
-      }
-    }
-    scaled_score <- calculate_original_scaling(raw_score, fisher_info, g_vector)
+    # Use the original 2-regime methodology from HMMGAS C code
+    # This requires: single S scalar, g-vector with alternating signs, normalization
+    scaled_score <- calculate_original_scaling(eta, tot_lik, X_t_prev, p_trans, fisher_info, K)
   } else {
     # Use Moore-Penrose or other modern scaling methods
     scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, scaling_method)
   }
-  
+
   # Step 5: Final validation and cleanup
   if (has_invalid_values(scaled_score)) {
     warning("Scaled score contains invalid values. Using conservative fallback.")
@@ -697,65 +684,86 @@ apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "simple
   return(scaled_score)
 }
 
-#' Calculate score vector using original 2-regime methodology
+#' Calculate score using original HMMGAS methodology
 #'
-#' @param raw_score Raw score vector (length K*(K-1))
+#' @param eta Vector of regime likelihoods (length K)
+#' @param tot_lik Total likelihood scalar
+#' @param X_t_prev Previous filtered probabilities (length K)
+#' @param p_trans Current transition probabilities (length K for diagonal)
 #' @param fisher_info Fisher Information scalar
-#' @param g_vector G-vector from score calculation (length K*(K-1))
-#' @return Scaled score vector following original methodology
+#' @param K Number of regimes
+#' @return Scaled score vector matching original HMMGAS C implementation
 #' @details
-#' Alternative scaling method that more closely follows the original 2-regime
-#' implementation. This function implements the exact methodology from the
-#' original simulation.R code:
-#' 
-#' 1. Calculate g_mod = sqrt(sum(g^2))
-#' 2. Normalize g if g_mod > 0: g = g / g_mod
-#' 3. Calculate S_star = S1 / sqrt(I)
-#' 4. Final score = S_star * g
-#' 
-#' This provides an alternative to the Moore-Penrose method for comparison.
-calculate_original_scaling <- function(raw_score, fisher_info, g_vector) {
+#' This function implements the EXACT methodology from the original HMMGAS C code
+#' (Filtering_2RegimesGAS.c). The key steps are:
+#'
+#' 1. Calculate a single scalar S = (eta[1] - eta[K]) / tot_lik
+#' 2. Build g-vector with ALTERNATING SIGNS:
+#'    - g[1] = +X_t_prev[1] * p11 * (1-p11)  (positive)
+#'    - g[2] = -X_t_prev[2] * p22 * (1-p22)  (negative)
+#' 3. Normalize: g_normalized = g / ||g||
+#' 4. Scale: S_star = S / sqrt(fisher_info)
+#' 5. Final score = S_star * g_normalized
+#'
+#' For K=2 with diag_probs=TRUE, this produces identical results to the
+#' original HMMGAS C implementation. For K>2, this generalizes by using
+#' S = (eta[1] - eta[K]) / tot_lik and alternating signs on the g-vector.
+calculate_original_scaling <- function(eta, tot_lik, X_t_prev, p_trans, fisher_info, K) {
   # Validate inputs
-  if (!is.numeric(raw_score) || !is.numeric(g_vector)) {
-    stop("raw_score and g_vector must be numeric")
+  if (!is.numeric(eta) || length(eta) != K) {
+    stop("eta must be a numeric vector of length K")
   }
-  
-  if (length(raw_score) != length(g_vector)) {
-    stop("raw_score and g_vector must have the same length")
+  if (!is.numeric(tot_lik) || length(tot_lik) != 1 || tot_lik <= 0) {
+    stop("tot_lik must be a positive scalar")
   }
-  
-  if (!is.numeric(fisher_info) || fisher_info <= 0) {
+  if (!is.numeric(X_t_prev) || length(X_t_prev) != K) {
+    stop("X_t_prev must be a numeric vector of length K")
+  }
+  if (!is.numeric(fisher_info) || length(fisher_info) != 1 || fisher_info <= 0) {
     stop("fisher_info must be a positive scalar")
   }
-  
-  # Following the original implementation exactly
-  
-  # Step 1: Calculate g_mod (norm of g-vector)
+
+  # Step 1: Calculate single scalar S (like original C code)
+  # Original: S = (eta[0] - eta[1]) / exp(logLik[t])
+  # For K>2, we use (eta[1] - eta[K]) as a generalization
+  S <- (eta[1] - eta[K]) / tot_lik
+
+  # Step 2: Build g-vector with alternating signs
+  # Original C code (for K=2):
+  #   g[0] =  X_t[(t-1)*2]   * p11[t] * (1-p11[t])   (positive)
+  #   g[1] = -X_t[(t-1)*2+1] * p22[t] * (1-p22[t])   (negative)
+  #
+  # For diagonal parameterization, p_trans has K elements (p11, p22, ..., pKK)
+  n_transition <- length(p_trans)
+  g_vector <- numeric(n_transition)
+
+  sign_multiplier <- 1  # Start positive, alternate: +1, -1, +1, -1, ...
+  for (i in 1:n_transition) {
+    g_vector[i] <- sign_multiplier * X_t_prev[i] * p_trans[i] * (1 - p_trans[i])
+    sign_multiplier <- -sign_multiplier  # Flip sign for next component
+  }
+
+  # Step 3: Normalize g-vector
+  # Original: g_mod = sqrt(g[0]^2 + g[1]^2); g = g / g_mod
   g_mod <- sqrt(sum(g_vector^2))
-  
-  # Step 2: Normalize g-vector if possible
   if (g_mod > .Machine$double.eps) {
     g_normalized <- g_vector / g_mod
   } else {
-    g_normalized <- g_vector
+    g_normalized <- rep(0, n_transition)
   }
-  
-  # Step 3: Calculate S_star following original formula
-  # In the original: S_star = S1 / sqrt(I)
-  # where S1 is (eta[1] - eta[2]) / tot_lik
-  
-  # For K-regime case, we use the magnitude of the score differences
-  S1 <- sqrt(sum(raw_score^2))  # Magnitude of raw score
-  
+
+  # Step 4: Scale S by Fisher Information
+  # Original: S_star = S / sqrt(I[t])
   if (fisher_info > .Machine$double.eps) {
-    S_star <- S1 / sqrt(fisher_info)
+    S_star <- S / sqrt(fisher_info)
   } else {
-    S_star <- 0.0
+    S_star <- 0
   }
-  
-  # Step 4: Final scaled score
+
+  # Step 5: Final score = S_star * g_normalized
+  # Original: score_SCAL[t*2] = S_star * g[t*2]; score_SCAL[t*2+1] = S_star * g[t*2+1]
   scaled_score <- S_star * g_normalized
-  
+
   return(scaled_score)
 }
 
@@ -1470,27 +1478,14 @@ calculate_gas_score_robust <- function(y_t, mu, sigma2, X_t_lag, X_t_prev, p_tra
   
   # Step 4: Apply appropriate scaling method
   if (scaling_method == "original") {
-    # Use the original 2-regime methodology
-    g_vector <- attr(raw_score, "g_components")
-    if (is.null(g_vector)) {
-      # Recalculate g_vector if not available
-      g_vector <- numeric(K*(K-1))
-      idx <- 1
-      for (i in 1:K) {
-        for (j in 1:K) {
-          if (i != j) {
-            g_vector[idx] <- X_t_prev[i] * p_trans[idx] * (1 - p_trans[idx])
-            idx <- idx + 1
-          }
-        }
-      }
-    }
-    scaled_score <- calculate_original_scaling(raw_score, fisher_info, g_vector)
+    # Use the original 2-regime methodology from HMMGAS C code
+    # This requires: single S scalar, g-vector with alternating signs, normalization
+    scaled_score <- calculate_original_scaling(eta, tot_lik, X_t_prev, p_trans, fisher_info, K)
   } else {
     # Use Moore-Penrose or other modern scaling methods
     scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, scaling_method)
   }
-  
+
   # Step 5: Final validation and cleanup
   if (has_invalid_values(scaled_score)) {
     warning("Scaled score contains invalid values. Using conservative fallback.")
