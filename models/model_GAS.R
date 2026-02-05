@@ -494,7 +494,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "
 #' 
 #' # Estimate model with off-diagonal probabilities
 #' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
-estimate_gas_model <- function(y, K, diag_probs = FALSE, equal_variances = FALSE,
+estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,
                                n_nodes = 30, scaling_method = "simple", 
                                use_fallback = TRUE, A_threshold = 1e-4,

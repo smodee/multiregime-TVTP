@@ -1,26 +1,30 @@
 #' Transition Matrix Helper Functions for Multi-Regime TVTP Models
-#' 
+#'
 #' This file provides functions for creating and manipulating transition matrices
 #' with support for both diagonal and off-diagonal parameterizations.
 #'
 #' DIAGONAL VS OFF-DIAGONAL PARAMETERIZATIONS:
 #' ===========================================
-#' 
-#' OFF-DIAGONAL PARAMETERIZATION (diag_probs = FALSE):
-#' - Uses K*(K-1) parameters representing all off-diagonal elements p_ij (i≠j)
-#' - Diagonal elements calculated as: p_ii = 1 - sum(p_ij for j≠i)
-#' - Default for new implementation, allows arbitrary transition structures
-#' - For K=2: [p12, p21] → matrix [[p11, p12], [p21, p22]] where p11=1-p12, p22=1-p21
 #'
-#' DIAGONAL PARAMETERIZATION (diag_probs = TRUE):
+#' DIAGONAL PARAMETERIZATION (diag_probs = TRUE) [DEFAULT]:
 #' - Uses K parameters representing diagonal elements p_11, p_22, ..., p_KK
 #' - Off-diagonal elements equal within each row: p_ij = (1-p_ii)/(K-1) for i≠j
-#' - Compatible with original simulation.R for K=2
-#' - For K=2: [p11, p22] → matrix [[p11, 1-p11], [1-p22, p22]]
-#' - For K=3: [p11, p22, p33] → matrix with equal off-diagonal probabilities per row
+#' - Compatible with original HMMGAS/simulation.R implementation
+#' - For K=2: [p11, p22] -> matrix [[p11, 1-p11], [1-p22, p22]]
+#' - For K=3: [p11, p22, p33] -> matrix with equal off-diagonal probabilities per row
+#' - IMPORTANT FOR K>2: This parameterization assumes that when leaving a state,
+#'   the probability of transitioning to any other state is uniform. This is a
+#'   modeling simplification that reduces parameters but may not fit all data.
+#'
+#' OFF-DIAGONAL PARAMETERIZATION (diag_probs = FALSE):
+#' - Uses K*(K-1) parameters representing all off-diagonal elements p_ij (i!=j)
+#' - Diagonal elements calculated as: p_ii = 1 - sum(p_ij for j!=i)
+#' - Allows arbitrary transition structures between states
+#' - For K=2: [p12, p21] -> matrix [[p11, p12], [p21, p22]] where p11=1-p12, p22=1-p21
+#' - More flexible but requires more parameters to estimate
 #'
 #' This dual system allows validation against the original implementation while
-#' maintaining flexibility for K>2 regime models.
+#' maintaining flexibility for K>2 regime models with complex transition dynamics.
 
 # Load required helper functions
 source("helpers/utility_functions.R")
@@ -49,7 +53,7 @@ source("helpers/utility_functions.R")
 #' 
 #' # Diagonal parameterization (original simulation.R style)
 #' transition_matrix(c(0.8, 0.9), diag_probs = TRUE)   # 2x2 matrix with p11=0.8, p22=0.9
-transition_matrix <- function(probs, diag_probs = FALSE, check_validity = TRUE) {
+transition_matrix <- function(probs, diag_probs = TRUE, check_validity = TRUE) {
   
   if (!is.numeric(probs) || length(probs) == 0) {
     stop("Input probabilities must be a non-empty numeric vector")
@@ -288,7 +292,7 @@ validate_transition_matrix <- function(t_mat, tol = 1e-10) {
 #' Ensures that probability parameters will result in a valid stochastic matrix.
 #' For diagonal parameterization, constrains values to (0,1).
 #' For off-diagonal parameterization, ensures row sums don't exceed max_constraint.
-convert_to_valid_probs <- function(probs, diag_probs = FALSE, max_constraint = 0.99) {
+convert_to_valid_probs <- function(probs, diag_probs = TRUE, max_constraint = 0.99) {
   
   if (!is.numeric(probs) || length(probs) == 0) {
     stop("Input probabilities must be a non-empty numeric vector")
@@ -366,7 +370,7 @@ convert_to_valid_probs <- function(probs, diag_probs = FALSE, max_constraint = 0
 #' # Using transition matrix directly
 #' P <- transition_matrix(c(0.8, 0.9), diag_probs = TRUE)
 #' stat_dist(P)
-stat_dist <- function(probs, diag_probs = FALSE, method = c("eigen", "power"), 
+stat_dist <- function(probs, diag_probs = TRUE, method = c("eigen", "power"), 
                       tol = 1e-8, fallback_value = NULL) {
   
   method <- match.arg(method)
@@ -456,7 +460,7 @@ stat_dist_power <- function(t_mat, max_iter = 1000, tol = 1e-10, initial_dist = 
 #' @param probs Vector of probability parameters
 #' @param diag_probs Whether parameters use diagonal parameterization
 #' @return Number of regimes K
-infer_K_from_probs <- function(probs, diag_probs = FALSE) {
+infer_K_from_probs <- function(probs, diag_probs = TRUE) {
   
   n <- length(probs)
   
@@ -480,7 +484,7 @@ infer_K_from_probs <- function(probs, diag_probs = FALSE) {
 #' @param probs Numeric vector of probability values
 #' @param diag_probs Whether these are diagonal or off-diagonal probabilities  
 #' @return Parameter vector with attributes set
-create_transition_params <- function(probs, diag_probs = FALSE) {
+create_transition_params <- function(probs, diag_probs = TRUE) {
   
   if (!is.numeric(probs) || length(probs) == 0) {
     stop("Probabilities must be a non-empty numeric vector")

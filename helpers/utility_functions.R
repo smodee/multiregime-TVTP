@@ -243,7 +243,7 @@ format_time <- function(seconds) {
 #' starts_offdiag <- generate_starting_points(y, K=3, model_type="tvp", 
 #'                                             n_starts=5, diag_probs=FALSE)
 generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "exogenous", "gas"), 
-                                     n_starts, diag_probs = FALSE, equal_variances = FALSE, 
+                                     n_starts, diag_probs = TRUE, equal_variances = FALSE, 
                                      seed = NULL) {
   # Validate inputs
   if (!is.numeric(y) || length(y) == 0) {

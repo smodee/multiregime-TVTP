@@ -36,16 +36,21 @@
 #'
 #' DIAGONAL VS OFF-DIAGONAL TRANSITION PROBABILITIES:
 #' ==================================================
-#' 
-#' diag_probs = TRUE (diagonal parameterization):
-#'   - K parameters representing p11, p22, ..., pKK
-#'   - Off-diagonal probabilities equal within each row: pij = (1-pii)/(K-1) for i≠j
-#'   - Compatible with original simulation.R implementation for K=2
 #'
-#' diag_probs = FALSE (off-diagonal parameterization):  
+#' diag_probs = TRUE (diagonal parameterization) [DEFAULT]:
+#'   - K parameters representing p11, p22, ..., pKK (persistence probabilities)
+#'   - Off-diagonal probabilities equal within each row: pij = (1-pii)/(K-1) for i≠j
+#'   - Compatible with original HMMGAS/simulation.R implementation
+#'   - More parsimonious: fewer parameters to estimate
+#'   - NOTE FOR K>2: Assumes uniform distribution of off-diagonal transitions.
+#'     This means "if you leave state i, you're equally likely to go to any other state."
+#'     This is a modeling assumption that may not be appropriate for all applications.
+#'
+#' diag_probs = FALSE (off-diagonal parameterization):
 #'   - K*(K-1) parameters representing all off-diagonal transition probabilities
 #'   - Diagonal probabilities calculated as: pii = 1 - sum(pij for j≠i)
-#'   - Default for new implementation, supports arbitrary transition structures
+#'   - Fully flexible: allows asymmetric transitions between states
+#'   - More parameters: may require more data for reliable estimation
 #'
 #' EXAMPLES:
 #' =========
@@ -76,7 +81,7 @@ source("helpers/utility_functions.R")
 #' This is the main function for creating properly attributed parameter vectors.
 #' It validates the configuration and vector length, then sets all required attributes.
 set_parameter_attributes <- function(par, K, model_type = c("constant", "tvp", "exogenous", "gas"),
-                                     diag_probs = FALSE, equal_variances = FALSE, 
+                                     diag_probs = TRUE, equal_variances = FALSE,
                                      parameterization = c("natural", "transformed")) {
   
   # Input validation

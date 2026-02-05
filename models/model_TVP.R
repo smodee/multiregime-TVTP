@@ -314,7 +314,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
 #' 
 #' # Estimate model with off-diagonal probabilities (new style)  
 #' result_offdiag <- estimate_tvp_model(y, K=2, diag_probs=FALSE, n_starts=5)
-estimate_tvp_model <- function(y, K, diag_probs = FALSE, equal_variances = FALSE,
+estimate_tvp_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   

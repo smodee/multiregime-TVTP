@@ -322,7 +322,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' 
 #' # Estimate model with off-diagonal probabilities
 #' result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=5)
-estimate_exo_model <- function(y, X_Exo, K, diag_probs = FALSE, equal_variances = FALSE,
+estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
