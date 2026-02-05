@@ -349,12 +349,28 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       
     } else if (model_type %in% c("tvp", "exogenous")) {
       # TVP/Exogenous models: [mu, sigma2, trans_prob, A]
-      A_start <- runif(n_transition, 0, 0.5)  # Moderate sensitivity
+      # A coefficients are unbounded. First starting point is 0 (matching original),
+      # subsequent points use normal distribution with log-scaled SD for exploration
+      if (i == 1 || n_starts == 1) {
+        A_start <- rep(0, n_transition)
+      } else {
+        # SD scales logarithmically: SD=1 when n_starts=7
+        sd_A <- log(n_starts) / log(7)
+        A_start <- rnorm(n_transition, mean = 0, sd = sd_A)
+      }
       param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start)
-      
+
     } else if (model_type == "gas") {
       # GAS model: [mu, sigma2, trans_prob, A, B]
-      A_start <- runif(n_transition, 0, 0.5)     # Moderate sensitivity
+      # A coefficients are unbounded. First starting point is 0 (matching original),
+      # subsequent points use normal distribution with log-scaled SD for exploration
+      if (i == 1 || n_starts == 1) {
+        A_start <- rep(0, n_transition)
+      } else {
+        # SD scales logarithmically: SD=1 when n_starts=7
+        sd_A <- log(n_starts) / log(7)
+        A_start <- rnorm(n_transition, mean = 0, sd = sd_A)
+      }
       B_start <- runif(n_transition, 0.5, 0.99) # High persistence
       param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start, B_start)
     }
@@ -395,10 +411,10 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       if (model_type == "constant") {
         fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback)
       } else if (model_type %in% c("tvp", "exogenous")) {
-        A_fallback <- rep(0.1, n_transition)
+        A_fallback <- rep(0, n_transition)  # Match original: A=0 as neutral starting point
         fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback, A_fallback)
       } else if (model_type == "gas") {
-        A_fallback <- rep(0.1, n_transition)
+        A_fallback <- rep(0, n_transition)  # Match original: A=0 as neutral starting point
         B_fallback <- rep(0.9, n_transition)
         fallback_vector <- c(mu_fallback, sigma2_fallback, trans_prob_fallback, A_fallback, B_fallback)
       }
