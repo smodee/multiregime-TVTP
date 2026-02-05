@@ -88,6 +88,8 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
     
     # Set initial values using the first exogenous variable value
     f[,1] <- omega + A * X_Exo[1]
+    # Note: Exogenous model uses standard logistic (not clamped) - this matches the
+    # original HMMGAS C implementation. Only GAS uses clamped logistic.
     p_trans_raw <- logistic(f[,1])
     p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     
@@ -206,9 +208,11 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   
   # Set initial values using the first exogenous variable value
   f[,1] <- omega + A * X_Exo[1]
+  # Note: Exogenous model uses standard logistic (not clamped) - this matches the
+  # original HMMGAS C implementation. Only GAS uses clamped logistic.
   p_trans_raw <- logistic(f[,1])
   p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
-  
+
   # Initial state probabilities (using stationary distribution)
   initial_probs <- tryCatch({
     stat_dist(p_trans[,1], diag_probs = diag_probs)

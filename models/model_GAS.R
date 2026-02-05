@@ -104,8 +104,9 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     
     # Set initial f values
     f[,1] <- omega
-    p_trans_raw <- logistic(f[,1])
-    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+    # Use clamped logistic to match original HMMGAS C implementation
+    # This maps f directly to [1e-10, 1-1e-10] for numerical stability
+    p_trans[,1] <- logistic_clamped(f[,1])
     
     # Initialize score as zero
     score_scaled[,1] <- 0
@@ -157,11 +158,11 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
       f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
       
-      # Convert f to transition probabilities
-      p_trans_raw <- logistic(f[,t+1])
-      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+      # Convert f to transition probabilities using clamped logistic
+      # Matches original HMMGAS: p = 1e-10 + (1-2*1e-10)/(1+exp(-f))
+      p_trans[,t+1] <- logistic_clamped(f[,t+1])
     }
-    
+
     # For the last time point
     Pmatrix <- transition_matrix(p_trans[,total_length-1], diag_probs = diag_probs, check_validity = FALSE)
     X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
@@ -337,8 +338,8 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "
   
   # Set initial f values
   f[,1] <- omega
-  p_trans_raw <- logistic(f[,1])
-  p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+  # Use clamped logistic to match original HMMGAS C implementation
+  p_trans[,1] <- logistic_clamped(f[,1])
   
   # Initial state probabilities (using stationary distribution)
   initial_probs <- tryCatch({
@@ -399,11 +400,11 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = "
     # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
     f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
     
-    # Convert f to transition probabilities
-    p_trans_raw <- logistic(f[,t+1])
-    p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+    # Convert f to transition probabilities using clamped logistic
+    # Matches original HMMGAS: p = 1e-10 + (1-2*1e-10)/(1+exp(-f))
+    p_trans[,t+1] <- logistic_clamped(f[,t+1])
   }
-  
+
   # Calculate likelihood for the last time point
   Pmatrix <- transition_matrix(p_trans[,M-1], diag_probs = diag_probs, check_validity = FALSE)
   X_tlag[,M] <- Pmatrix %*% X_t[,M-1]

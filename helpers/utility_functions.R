@@ -19,10 +19,50 @@ logit <- function(x, eps = .Machine$double.eps) {
 #'
 #' @param x Value in (-∞,∞) to transform
 #' @return Transformed value in (0,1)
+#' @details
+#' Standard logistic function used by TVP and Exogenous models.
+#'
+#' NOTE ON MODEL-SPECIFIC USAGE:
+#' - TVP model: Uses standard logistic() - matches original HMMGAS C implementation
+#' - Exogenous model: Uses standard logistic() - matches original HMMGAS C implementation
+#' - GAS model: Uses logistic_clamped() - matches original HMMGAS C implementation
+#'
+#' The original HMMGAS package applies probability clamping [1e-10, 1-1e-10] only
+#' in the GAS model, not in TVP or Exogenous models. This asymmetry exists in the
+#' original C code and is preserved here for consistency.
 #' @examples
 #' logistic(1.098612)  # Returns 0.75
 logistic <- function(x) {
   return(1/(1+exp(-x)))
+}
+
+#' Clamped logistic transformation (unconstrained space -> bounded natural space)
+#'
+#' @param x Value in (-∞,∞) to transform
+#' @param eps Small value for boundary clamping (default: 1e-10)
+#' @return Transformed value in [eps, 1-eps]
+#' @details
+#' This function matches the original HMMGAS C implementation which uses:
+#' p = eps + (1-2*eps)/(1+exp(-x))
+#'
+#' This maps the unconstrained value x to the interval [eps, 1-eps] rather than (0,1),
+#' providing numerical stability when probabilities are used in subsequent calculations
+#' involving log(), division by p*(1-p), etc.
+#'
+#' The default eps=1e-10 matches the original HMMGAS implementation.
+#'
+#' NOTE ON MODEL-SPECIFIC USAGE:
+#' This clamped version is used ONLY by the GAS model. The original HMMGAS C code
+#' applies this clamping specifically in GAS (Filtering_2RegimesGAS.c) but uses
+#' standard logistic in TVP (Filtering_2RegimesTVP.c) and Exogenous models.
+#' This is because the GAS score calculation involves terms like p*(1-p) in the
+#' denominator, making numerical stability more critical.
+#' @examples
+#' logistic_clamped(0)     # Returns 0.5
+#' logistic_clamped(100)   # Returns 1-1e-10 (not exactly 1)
+#' logistic_clamped(-100)  # Returns 1e-10 (not exactly 0)
+logistic_clamped <- function(x, eps = 1e-10) {
+  return(eps + (1 - 2*eps) / (1 + exp(-x)))
 }
 
 #' Safe logarithm to handle zeros and negative values

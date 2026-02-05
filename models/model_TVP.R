@@ -88,6 +88,8 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
     # Set initial values - use omega_LR (long-run/unconditional value) for initialization
     # This matches the original implementation and literature guidance
     f[,1] <- omega_LR
+    # Note: TVP uses standard logistic (not clamped) - this matches the original HMMGAS
+    # C implementation (Filtering_2RegimesTVP.c). Only GAS uses clamped logistic.
     p_trans_raw <- logistic(f[,1])
     p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
     
@@ -200,9 +202,11 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   # Set initial values - use omega_LR (long-run/unconditional value) for initialization
   # This matches the original implementation and literature guidance
   f[,1] <- omega_LR
+  # Note: TVP uses standard logistic (not clamped) - this matches the original HMMGAS
+  # C implementation (Filtering_2RegimesTVP.c). Only GAS uses clamped logistic.
   p_trans_raw <- logistic(f[,1])
   p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
-  
+
   # Initial state probabilities (using stationary distribution)
   initial_probs <- tryCatch({
     stat_dist(p_trans[,1], diag_probs = diag_probs)
