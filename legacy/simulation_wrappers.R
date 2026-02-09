@@ -13,13 +13,13 @@ source("helpers/parameter_transforms.R")
 
 
 
-dataGASCD_original <- function(M, N, mu, sigma2, init_trans, A, B, weights, nodes, mu_weights, sigma_weights) {
+dataGASCD_original <- function(M, N, mu, sigma2, diag_probs, A, B, weights, nodes, mu_weights, sigma_weights) {
   
   data=matrix(0,M,N)
-  
-  # Convert to original internal format:
+
+  # Extract parameters (diag_probs are p11, p22 directly)
   mu0 = mu[1]; mu1 = mu[2]
-  p11 = 1 - init_trans[1]; p22 = 1 - init_trans[2]  
+  p11 = diag_probs[1]; p22 = diag_probs[2]
   A1 = A[1]; A2 = A[2]
   B1 = B[1]; B2 = B[2]  # Key addition: B parameters for persistence
   
@@ -252,8 +252,8 @@ dataGASCD_original <- function(M, N, mu, sigma2, init_trans, A, B, weights, node
 }
 
 
-run_original_GAS_estimation <- function(M, N, mu, sigma2, init_trans, A, B, B_burnin = 0, C_cutoff = 0) {
-  
+run_original_GAS_estimation <- function(M, N, mu, sigma2, diag_probs, A, B, B_burnin = 0, C_cutoff = 0) {
+
   # STEP 1: Set up initial quadrature (use regime parameters for representative data)
   # Create representative sample from regime parameters
   regime_sample <- c(rnorm(500, mu[1], sqrt(sigma2)), rnorm(500, mu[2], sqrt(sigma2)))
@@ -262,43 +262,39 @@ run_original_GAS_estimation <- function(M, N, mu, sigma2, init_trans, A, B, B_bu
   GQ <- gauss.quad.prob(30, "normal", mu = sample_median, sigma = sample_sd)
   assign("weights", GQ$weights, envir = .GlobalEnv)
   assign("nodes", GQ$nodes, envir = .GlobalEnv)
-  
+
   # STEP 2: Now generate data with proper quadrature setup
-  dataGASCDsim <- dataGASCD_original(M, N, mu, sigma2, init_trans, A, B, 
+  dataGASCDsim <- dataGASCD_original(M, N, mu, sigma2, diag_probs, A, B,
                                      weights, nodes, sample_median, sample_sd)
-  
+
   # STEP 3: Apply burn-in and cutoff if needed
   if (B_burnin > 0 || C_cutoff > 0) {
     start_idx <- B_burnin + 1
     end_idx <- N - C_cutoff
     dataGASCDsim <- dataGASCDsim[, start_idx:end_idx]
   }
-  
+
   # Results matrix (9 parameters for GAS model)
   parGASCD <- matrix(0, M, 9)
-  
+
   # Estimation loop
   for (i in 1:M) {
-    
+
     # Generate starting point using the new implementation's method
     y_for_start <- dataGASCDsim[i,]
     starting_points <- generate_starting_points(y_for_start, K = 2, model_type = "gas", n_starts = 1, seed = i)
     par_start_new_format <- starting_points[[1]]
-    
+
     # Convert from new implementation format to original format
-    # New format: [mu1, mu2, sigma2_1, sigma2_2, init_trans, A, B]  
+    # New format: [mu1, mu2, sigma2_1, sigma2_2, diag_probs, A, B]
     # Original format: [mu1, mu2, sigma2, p11, p22, A1, A2, B1, B2]
     mu_start <- par_start_new_format[1:2]
     sigma2_start <- par_start_new_format[3]  # Use first variance
-    init_trans_start <- par_start_new_format[5:6]  # off-diagonal transitions
+    diag_probs_start <- par_start_new_format[5:6]  # diagonal probabilities (p11, p22)
     A_start <- par_start_new_format[7:8]
     B_start <- par_start_new_format[9:10]  # B parameters
-    
-    # Convert transitions: new format -> original format
-    p11_start <- 1 - init_trans_start[1]
-    p22_start <- 1 - init_trans_start[2]
-    
-    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, p11_start, p22_start, 
+
+    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, diag_probs_start[1], diag_probs_start[2],
                             A_start[1], A_start[2], B_start[1], B_start[2])
     
     GAS.est <- nlminb(
@@ -322,13 +318,13 @@ run_original_GAS_estimation <- function(M, N, mu, sigma2, init_trans, A, B, B_bu
 #############TVP
 
 
-dataTVPCD_original <- function(M, N, mu, sigma2, init_trans, A) {
-  
+dataTVPCD_original <- function(M, N, mu, sigma2, diag_probs, A) {
+
   data=matrix(0,M,N)
-  
-  # Convert to original internal format:
+
+  # Extract parameters (diag_probs are p11, p22 directly)
   mu0 = mu[1]; mu1 = mu[2]
-  p11 = 1 - init_trans[1]; p22 = 1 - init_trans[2]  
+  p11 = diag_probs[1]; p22 = diag_probs[2]
   A1 = A[1]; A2 = A[2]
   
   omega1_LR = log(p11/(1-p11))
@@ -429,42 +425,38 @@ dataTVPCD_original <- function(M, N, mu, sigma2, init_trans, A) {
   data
 }
 
-run_original_TVP_estimation <- function(M, N, mu, sigma2, init_trans, A, B_burnin = 0, C_cutoff = 0) {
-  
+run_original_TVP_estimation <- function(M, N, mu, sigma2, diag_probs, A, B_burnin = 0, C_cutoff = 0) {
+
   # Generate data using our new parameterized function (full series)
-  dataTVPCDsim <- dataTVPCD_original(M, N, mu, sigma2, init_trans, A)
-  
+  dataTVPCDsim <- dataTVPCD_original(M, N, mu, sigma2, diag_probs, A)
+
   # Apply burn-in and cutoff if needed
   if (B_burnin > 0 || C_cutoff > 0) {
     start_idx <- B_burnin + 1
     end_idx <- N - C_cutoff
     dataTVPCDsim <- dataTVPCDsim[, start_idx:end_idx]
   }
-  
+
   # Results matrix
   partvpCD <- matrix(0, M, 7)
-  
+
   # Estimation loop
   for (i in 1:M) {
-    
+
     # Generate starting point using the new implementation's method
     y_for_start <- dataTVPCDsim[i,]  # Use this data series for starting point generation
     starting_points <- generate_starting_points(y_for_start, K = 2, model_type = "tvp", n_starts = 1, seed = i)
     par_start_new_format <- starting_points[[1]]
-    
+
     # Convert from new implementation format to original format
-    # New format: [mu1, mu2, sigma2_1, sigma2_2, init_trans, A]  
+    # New format: [mu1, mu2, sigma2_1, sigma2_2, diag_probs, A]
     # Original format: [mu1, mu2, sigma2, p11, p22, A1, A2]
     mu_start <- par_start_new_format[1:2]
     sigma2_start <- par_start_new_format[3]  # Use first variance (they should be equal anyway)
-    init_trans_start <- par_start_new_format[5:6]  # off-diagonal transitions
+    diag_probs_start <- par_start_new_format[5:6]  # diagonal probabilities (p11, p22)
     A_start <- par_start_new_format[7:8]
-    
-    # Convert transitions: new format -> original format
-    p11_start <- 1 - init_trans_start[1]
-    p22_start <- 1 - init_trans_start[2]
-    
-    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, p11_start, p22_start, A_start[1], A_start[2])
+
+    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, diag_probs_start[1], diag_probs_start[2], A_start[1], A_start[2])
     
     TVP.est <- nlminb(
       start = par.trasf.inv_TVP(par_start_original), 
@@ -489,13 +481,13 @@ run_original_TVP_estimation <- function(M, N, mu, sigma2, init_trans, A, B_burni
 ######XExo
 
 
-dataexoCD_original <- function(M, N, mu, sigma2, init_trans, A, X_Exo) {
-  
+dataexoCD_original <- function(M, N, mu, sigma2, diag_probs, A, X_Exo) {
+
   data=matrix(0,M,N)
-  
-  # Convert to original internal format:
+
+  # Extract parameters (diag_probs are p11, p22 directly)
   mu0 = mu[1]; mu1 = mu[2]
-  p11 = 1 - init_trans[1]; p22 = 1 - init_trans[2]  
+  p11 = diag_probs[1]; p22 = diag_probs[2]
   A1 = A[1]; A2 = A[2]
   
   # Key difference from TVP: exogenous model uses different omega calculation
@@ -608,11 +600,11 @@ dataexoCD_original <- function(M, N, mu, sigma2, init_trans, A, X_Exo) {
 }
 
 
-run_original_EXO_estimation <- function(M, N, mu, sigma2, init_trans, A, X_Exo, B_burnin = 0, C_cutoff = 0) {
-  
+run_original_EXO_estimation <- function(M, N, mu, sigma2, diag_probs, A, X_Exo, B_burnin = 0, C_cutoff = 0) {
+
   # Generate data using our new parameterized function (full series)
-  dataexoCDsim <- dataexoCD_original(M, N, mu, sigma2, init_trans, A, X_Exo)
-  
+  dataexoCDsim <- dataexoCD_original(M, N, mu, sigma2, diag_probs, A, X_Exo)
+
   # Apply burn-in and cutoff if needed
   if (B_burnin > 0 || C_cutoff > 0) {
     start_idx <- B_burnin + 1
@@ -623,31 +615,27 @@ run_original_EXO_estimation <- function(M, N, mu, sigma2, init_trans, A, X_Exo, 
   } else {
     X_Exo_trimmed <- X_Exo
   }
-  
+
   # Results matrix
   parexoCD <- matrix(0, M, 7)
-  
+
   # Estimation loop
   for (i in 1:M) {
-    
+
     # Generate starting point using the new implementation's method
     y_for_start <- dataexoCDsim[i,]
     starting_points <- generate_starting_points(y_for_start, K = 2, model_type = "exogenous", n_starts = 1, seed = i)
     par_start_new_format <- starting_points[[1]]
-    
+
     # Convert from new implementation format to original format
-    # New format: [mu1, mu2, sigma2_1, sigma2_2, init_trans, A]  
+    # New format: [mu1, mu2, sigma2_1, sigma2_2, diag_probs, A]
     # Original format: [mu1, mu2, sigma2, p11, p22, A1, A2]
     mu_start <- par_start_new_format[1:2]
     sigma2_start <- par_start_new_format[3]  # Use first variance
-    init_trans_start <- par_start_new_format[5:6]  # off-diagonal transitions
+    diag_probs_start <- par_start_new_format[5:6]  # diagonal probabilities (p11, p22)
     A_start <- par_start_new_format[7:8]
-    
-    # Convert transitions: new format -> original format
-    p11_start <- 1 - init_trans_start[1]
-    p22_start <- 1 - init_trans_start[2]
-    
-    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, p11_start, p22_start, A_start[1], A_start[2])
+
+    par_start_original <- c(mu_start[1], mu_start[2], sigma2_start, diag_probs_start[1], diag_probs_start[2], A_start[1], A_start[2])
     
     TVP.XExo.est <- nlminb(
       start = par.trasf.inv_TVPXExo(par_start_original), 
