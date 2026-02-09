@@ -39,96 +39,106 @@ source("helpers/parameter_transforms.R")
 #'                                         diag_probs=FALSE, equal_variances=FALSE)
 #' data_sim <- dataTVPCD(10, 1000, par_offdiag)
 dataTVPCD <- function(M, N, par, burn_in = 100) {
-  
+
   # Validate parameter vector and extract configuration
   validate_parameter_attributes(par)
-  
+
   K <- attr(par, "K")
   diag_probs <- attr(par, "diag_probs")
   equal_variances <- attr(par, "equal_variances")
-  
+
   # Extract parameter components using attribute-based extraction
   mu <- extract_parameter_component(par, "mu")
   sigma2 <- extract_parameter_component(par, "sigma2")
   init_trans <- extract_parameter_component(par, "trans_prob")
   A <- extract_parameter_component(par, "A")
-  
+
   # Handle equal variances: expand single variance to K variances for simulation
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
   }
-  
+
   # Determine the number of transition parameters based on parameterization
   n_transition <- length(init_trans)
-  
+
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
-  
+
   # Get baseline transition probabilities that are logit-transformed
+  # omega_LR is the long-run (unconditional) value of f
+  # omega is the intercept in the AR(1) process: f[t+1] = omega + A * y[t]
   omega_LR <- logit(init_trans)
-  omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
-  
+  omega <- omega_LR * (1 - A)
+
   for (i in 1:M) {
-    # Initialize all data structures including burn-in period
+    # Total length including burn-in
     total_length <- N + burn_in
-    eta <- matrix(0, nrow=K, ncol=total_length)     # Likelihood of each regime
-    tot_lik <- numeric(total_length)                # Total likelihood
-    X_t <- matrix(0, nrow=K, ncol=total_length)     # Filtered probabilities after observation
-    X_tlag <- matrix(0, nrow=K, ncol=total_length)  # Predicted probabilities before observation
-    S <- numeric(total_length)                      # Latent state
-    y.sim <- numeric(total_length)                  # Random increments according to state
-    
-    # Initialize f values for transition probabilities and convert to valid probabilities
-    f <- matrix(0, nrow=n_transition, ncol=total_length)
-    p_trans <- matrix(0, nrow=n_transition, ncol=total_length)
-    
-    # Initial state probabilities (uniform distribution)
-    X_t[,1] <- rep(1/K, K)
-    
-    # Set initial values - use omega_LR (long-run/unconditional value) for initialization
-    # This matches the original implementation and literature guidance
-    f[,1] <- omega_LR
-    # Note: TVP uses standard logistic (not clamped) - this matches the original HMMGAS
-    # C implementation (Filtering_2RegimesTVP.c). Only GAS uses clamped logistic.
-    p_trans_raw <- logistic(f[,1])
-    p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
-    
-    for (t in 1:(total_length-1)) {
-      # Generate predicted probabilities
-      Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
-      X_tlag[,t] <- Pmatrix %*% X_t[,t]
-      
-      # Sample a state based on the predicted probabilities and 
-      # simulate data conditional on that state
-      S[t] <- sample(1:K, 1, prob=X_tlag[,t])
-      y.sim[t] <- rnorm(1, mu[S[t]], sqrt(sigma2[S[t]]))
-      
-      # Calculate likelihoods
-      for (k in 1:K) {
-        eta[k,t] <- dnorm(y.sim[t], mu[k], sqrt(sigma2[k]))
-      }
-      tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
-      
-      # Calculate filtered probabilities
-      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-      
-      # Update transition probabilities based on the observed y.sim[t]
-      # This is the key difference from the constant model
-      f[,t+1] <- omega + A * y.sim[t]
-      p_trans_raw <- logistic(f[,t+1])
-      p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
+
+    # Initialize data structures
+    f <- matrix(0, nrow = n_transition, ncol = total_length)
+    p_trans <- matrix(0, nrow = n_transition, ncol = total_length)
+    X_tlag <- matrix(0, nrow = K, ncol = total_length)
+    X_t <- matrix(0, nrow = K, ncol = total_length)
+    eta <- matrix(0, nrow = K, ncol = total_length)
+    S <- numeric(total_length)
+    y.sim <- numeric(total_length)
+
+    # =========================================================================
+    # INITIALIZATION (t=1): Generalized for K>=2
+    # =========================================================================
+    # Set f[1] = omega_LR (long-run value)
+    f[, 1] <- omega_LR
+    p_trans[, 1] <- logistic(f[, 1])
+
+    # Compute initial predicted probabilities using stationary distribution
+    # This works for any K>=2 using eigenvalue-based stationary distribution
+    X_tlag[, 1] <- compute_initial_predicted_probs(p_trans[, 1], diag_probs = diag_probs)
+
+    # Sample first state based on X_tlag (predicted probabilities)
+    S[1] <- sample(1:K, 1, prob = X_tlag[, 1])
+    y.sim[1] <- rnorm(1, mu[S[1]], sqrt(sigma2[S[1]]))
+
+    # Compute eta and filtered probabilities for t=1
+    for (k in 1:K) {
+      eta[k, 1] <- dnorm(y.sim[1], mu[k], sqrt(sigma2[k]))
     }
-    
-    # For the last time point
-    Pmatrix <- transition_matrix(p_trans[,total_length-1], diag_probs = diag_probs, check_validity = FALSE)
-    X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
-    S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
-    y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
-    
-    # Remove burn-in and save the simulation run in the data matrix
-    data[i,] <- y.sim[(burn_in+1):total_length]
+    tot_lik_1 <- sum(eta[, 1] * X_tlag[, 1])
+    X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik_1
+
+    # =========================================================================
+    # MAIN LOOP (t=1 to total_length-1): Matches original exactly
+    # Original loop: for(t in 1:(N-1)) with f[t+1] = omega + A*y[t] at START
+    # =========================================================================
+    for (t in 1:(total_length - 1)) {
+      # Update f for next time step: f[t+1] = omega + A * y[t]
+      # This is done at the BEGINNING of each iteration (matching original)
+      f[, t + 1] <- omega + A * y.sim[t]
+      p_trans[, t + 1] <- logistic(f[, t + 1])
+
+      # Compute predicted probabilities X_tlag[t+1] using generalized formula
+      # Works for any K>=2
+      if (t == 1) {
+        X_tlag[, t + 1] <- compute_predicted_probs(X_t[, 1], p_trans[, t + 1], diag_probs = diag_probs)
+      } else {
+        X_tlag[, t + 1] <- compute_predicted_probs(X_t[, t], p_trans[, t + 1], diag_probs = diag_probs)
+      }
+
+      # Sample state and generate observation
+      S[t + 1] <- sample(1:K, 1, prob = X_tlag[, t + 1])
+      y.sim[t + 1] <- rnorm(1, mu[S[t + 1]], sqrt(sigma2[S[t + 1]]))
+
+      # Compute eta and filtered probabilities
+      for (k in 1:K) {
+        eta[k, t + 1] <- dnorm(y.sim[t + 1], mu[k], sqrt(sigma2[k]))
+      }
+      tot_lik_t <- sum(eta[, t + 1] * X_tlag[, t + 1])
+      X_t[, t + 1] <- (eta[, t + 1] * X_tlag[, t + 1]) / tot_lik_t
+    }
+
+    # Remove burn-in and save the simulation run
+    data[i, ] <- y.sim[(burn_in + 1):total_length]
   }
-  
+
   return(data)
 }
 
@@ -158,103 +168,138 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
 #' y <- rnorm(1000)
 #' loglik <- Rfiltering_TVP(par_diag, y, 100, 50)
 Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
-  
+
   # Only validate if diagnostics are enabled (performance optimization)
   if (diagnostics) {
     validate_parameter_attributes(par)
   }
-  
+
   K <- attr(par, "K")
   diag_probs <- attr(par, "diag_probs")
   equal_variances <- attr(par, "equal_variances")
-  
+
   # Extract parameter components using attribute-based extraction
   mu <- extract_parameter_component(par, "mu")
   sigma2 <- extract_parameter_component(par, "sigma2")
   init_trans <- extract_parameter_component(par, "trans_prob")
   A <- extract_parameter_component(par, "A")
-  
+
   # Handle equal variances: expand single variance to K variances for filtering
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
   }
-  
+
   # Determine length of the time series
   M <- length(y)
-  
+
   # Determine the number of transition parameters based on parameterization
   n_transition <- length(init_trans)
-  
+
   # Initialize variables
   eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
   tot_lik <- numeric(M)                # Total likelihood
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
   X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
-  
+
   # Get baseline transition probabilities that are logit-transformed
+  # omega_LR is the long-run (unconditional) value of f
+  # omega is the intercept in the AR(1) process: f[t+1] = omega + A * y[t]
   omega_LR <- logit(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
-  
+
   # Initialize f values for transition probabilities
   f <- matrix(0, nrow=n_transition, ncol=M)
   p_trans <- matrix(0, nrow=n_transition, ncol=M)
-  
-  # Set initial values - use omega_LR (long-run/unconditional value) for initialization
-  # This matches the original implementation and literature guidance
-  f[,1] <- omega_LR
-  # Note: TVP uses standard logistic (not clamped) - this matches the original HMMGAS
-  # C implementation (Filtering_2RegimesTVP.c). Only GAS uses clamped logistic.
-  p_trans_raw <- logistic(f[,1])
-  p_trans[,1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
 
-  # Initial state probabilities (using stationary distribution)
-  initial_probs <- tryCatch({
-    stat_dist(p_trans[,1], diag_probs = diag_probs)
-  }, error = function(e) {
-    rep(1/K, K)  # Fallback to uniform
-  })
-  X_t[,1] <- initial_probs
-  
-  for (t in 1:(M-1)) {
-    # Generate predicted probabilities
-    Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
-    X_tlag[,t] <- Pmatrix %*% X_t[,t]
-    
-    # Calculate likelihoods
-    for (k in 1:K) {
-      eta[k,t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
-    }
-    tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
-    
-    # Protect against numerical issues
-    if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
-      tot_lik[t] <- .Machine$double.eps
-      X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
-    } else {
-      # Calculate filtered probabilities
-      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-    }
-    
-    # Update transition probabilities based on the observed y[t]
-    # This is the key feature of the TVP model
-    f[,t+1] <- omega + A * y[t]
-    p_trans_raw <- logistic(f[,t+1])
-    p_trans[,t+1] <- convert_to_valid_probs(p_trans_raw, diag_probs = diag_probs)
-  }
-  
-  # Calculate likelihood for the last time point
-  Pmatrix <- transition_matrix(p_trans[,M-1], diag_probs = diag_probs, check_validity = FALSE)
-  X_tlag[,M] <- Pmatrix %*% X_t[,M-1]
+  # =========================================================================
+  # INITIALIZATION (t=1): Generalized for K>=2
+  # =========================================================================
+  # At t=1, use omega_LR (long-run value) for initial transition probabilities
+  f[, 1] <- omega_LR
+  p_trans[, 1] <- logistic(f[, 1])
+
+  # Compute initial predicted probabilities using stationary distribution
+  # This works for any K>=2 using eigenvalue-based stationary distribution
+  X_tlag[, 1] <- compute_initial_predicted_probs(p_trans[, 1], diag_probs = diag_probs)
+
+  # Compute eta (observation likelihoods) for t=1
   for (k in 1:K) {
-    eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
+    eta[k, 1] <- dnorm(y[1], mu[k], sqrt(sigma2[k]))
   }
-  tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
-  
-  # Protect against numerical issues
-  if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
-    tot_lik[M] <- .Machine$double.eps
+
+  # Compute total likelihood and filtered probabilities for t=1
+  tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
+  if (tot_lik[1] <= 0 || is.na(tot_lik[1])) {
+    tot_lik[1] <- .Machine$double.eps
+    X_t[, 1] <- c(0.5, 0.5)
+  } else {
+    X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik[1]
   }
-  
+
+  # =========================================================================
+  # CRITICAL: Set f[,2] = omega (NOT omega + A*y[1])
+  # This matches the original C code lines 60-65 which sets f1[1]=omega1, f2[1]=omega2
+  # BEFORE entering the main loop. This is a special initialization step.
+  # =========================================================================
+  if (M >= 2) {
+    f[, 2] <- omega
+    p_trans[, 2] <- logistic(f[, 2])
+  }
+
+  # =========================================================================
+  # MAIN LOOP (t=2 to M-1): Standard TVP filtering - Generalized for K>=2
+  # =========================================================================
+  if (M >= 2) {
+    for (t in 2:(M-1)) {
+      # Generate predicted probabilities using generalized formula
+      X_tlag[, t] <- compute_predicted_probs(X_t[, t-1], p_trans[, t], diag_probs = diag_probs)
+
+      # Calculate likelihoods
+      for (k in 1:K) {
+        eta[k, t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
+      }
+      tot_lik[t] <- sum(eta[, t] * X_tlag[, t])
+
+      # Compute filtered probabilities
+      if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
+        tot_lik[t] <- .Machine$double.eps
+        X_t[, t] <- rep(1/K, K)  # Uniform fallback for any K
+      } else {
+        X_t[, t] <- (eta[, t] * X_tlag[, t]) / tot_lik[t]
+      }
+
+      # Update transition probabilities for next time step
+      # f[t+1] = omega + A * y[t]
+      if (t < M - 1) {
+        f[, t+1] <- omega + A * y[t]
+        p_trans[, t+1] <- logistic(f[, t+1])
+      }
+    }
+  }
+
+  # =========================================================================
+  # LAST TIME POINT (t=M): Process final observation - Generalized for K>=2
+  # =========================================================================
+  if (M >= 2) {
+    # Need to set f[,M] if not already set
+    if (M > 2) {
+      f[, M] <- omega + A * y[M-1]
+      p_trans[, M] <- logistic(f[, M])
+    }
+
+    # Generate predicted probabilities using generalized formula
+    X_tlag[, M] <- compute_predicted_probs(X_t[, M-1], p_trans[, M], diag_probs = diag_probs)
+
+    for (k in 1:K) {
+      eta[k, M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
+    }
+    tot_lik[M] <- sum(eta[, M] * X_tlag[, M])
+
+    if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
+      tot_lik[M] <- .Machine$double.eps
+    }
+  }
+
   # Sum log-likelihoods, but exclude burn-in and cut-off
   valid_indices <- (B+1):(M-C)
   if (length(valid_indices) <= 0) {

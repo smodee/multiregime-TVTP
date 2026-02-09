@@ -115,13 +115,12 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     zero_score_count <- 0
     
     for (t in 1:(total_length-1)) {
-      # Generate predicted probabilities
-      Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
-      X_tlag[,t] <- Pmatrix %*% X_t[,t]
-      
-      # Sample a state based on the predicted probabilities and 
+      # Generate predicted probabilities using generalized formula (works for any K>=2)
+      X_tlag[, t] <- compute_predicted_probs(X_t[, t], p_trans[, t], diag_probs = diag_probs)
+
+      # Sample a state based on the predicted probabilities and
       # simulate data conditional on that state
-      S[t] <- sample(1:K, 1, prob=X_tlag[,t])
+      S[t] <- sample(1:K, 1, prob=X_tlag[, t])
       y.sim[t] <- rnorm(1, mu[S[t]], sqrt(sigma2[S[t]]))
       
       # Calculate likelihoods
@@ -163,10 +162,9 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       p_trans[,t+1] <- logistic_clamped(f[,t+1])
     }
 
-    # For the last time point
-    Pmatrix <- transition_matrix(p_trans[,total_length-1], diag_probs = diag_probs, check_validity = FALSE)
-    X_tlag[,total_length] <- Pmatrix %*% X_t[,total_length-1]
-    S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
+    # For the last time point - use generalized formula
+    X_tlag[, total_length] <- compute_predicted_probs(X_t[, total_length-1], p_trans[, total_length-1], diag_probs = diag_probs)
+    S[total_length] <- sample(1:K, 1, prob=X_tlag[, total_length])
     y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
     
     # Remove burn-in and save the simulation run in the data matrix
@@ -334,86 +332,134 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   score_norms <- numeric(M)
   
   # Get baseline transition probabilities for omega calculation
+  # NOTE: For GAS model, omega = omega_LR (no (1-A) factor like TVP/Exogenous)
   omega <- logit(init_trans)
-  
-  # Set initial f values
-  f[,1] <- omega
-  # Use clamped logistic to match original HMMGAS C implementation
-  p_trans[,1] <- logistic_clamped(f[,1])
-  
-  # Initial state probabilities (using stationary distribution)
-  initial_probs <- tryCatch({
-    stat_dist(p_trans[,1], diag_probs = diag_probs)
-  }, error = function(e) {
-    rep(1/K, K)  # Fallback to uniform
-  })
-  X_t[,1] <- initial_probs
-  
+  omega_LR <- omega  # They are the same for GAS
+
+  # =============================================================================
+  # INITIALIZATION (t=1): Generalized for K>=2
+  # =============================================================================
+  # Set f[,1] = omega_LR
+  f[, 1] <- omega_LR
+
+  # Compute transition probabilities at t=1 (no clamping for initial value)
+  p_trans[, 1] <- logistic(f[, 1])
+
+  # Compute stationary distribution using eigenvalue method (works for any K>=2)
+  stationary_probs <- stat_dist(p_trans[, 1], diag_probs = diag_probs)
+
+  # Compute initial predicted probabilities: X_tlag[,1] = P^T * stationary
+  X_tlag[, 1] <- compute_initial_predicted_probs(p_trans[, 1], diag_probs = diag_probs)
+
+  # Calculate eta and likelihood for t=1
+  for (k in 1:K) {
+    eta[k, 1] <- dnorm(y[1], mu[k], sqrt(sigma2[k]))
+  }
+  tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
+
+  # Calculate filtered probabilities X_t[,1]
+  X_t[1, 1] <- eta[1, 1] * X_tlag[1, 1] / tot_lik[1]
+  X_t[2, 1] <- eta[2, 1] * X_tlag[2, 1] / tot_lik[1]
+
   # Initialize score as zero
-  score_scaled[,1] <- 0
-  
+  score_scaled[, 1] <- 0
+
   # Track zero scores for diagnostics
   zero_score_count <- 0
-  
-  for (t in 1:(M-1)) {
-    # Generate predicted probabilities
-    Pmatrix <- transition_matrix(p_trans[,t], diag_probs = diag_probs, check_validity = FALSE)
-    X_tlag[,t] <- Pmatrix %*% X_t[,t]
-    
+
+  # =============================================================================
+  # Calculate score for t=1 and set f[,2]
+  # =============================================================================
+  # For the GAS model, at t=1 we use stationary probabilities for the score calculation
+  # (the stationary_probs were already computed above for any K>=2)
+
+  # Calculate GAS score for time t=1 using STATIONARY probs
+  score_result_1 <- calculate_gas_score(
+    y_obs = y[1],
+    mu = mu,
+    sigma2 = sigma2,
+    trans_prob = p_trans[, 1],
+    diag_probs = diag_probs,
+    X_pred = stationary_probs,  # Use STATIONARY probs, not X_tlag!
+    gh_setup = gh_setup,
+    scaling_method = scaling_method
+  )
+
+  score_scaled[, 2] <- score_result_1$scaled_score
+  fisher_info_series[1] <- score_result_1$fisher_info
+  score_norms[1] <- sqrt(sum(score_result_1$raw_score^2))
+
+  if (all(abs(score_result_1$scaled_score) < 1e-10)) {
+    zero_score_count <- zero_score_count + 1
+  }
+
+  # Set f[,2] using GAS dynamics
+  if (M >= 2) {
+    f[, 2] <- omega + A * score_scaled[, 2] + B * (f[, 1] - omega)
+    # Use clamped logistic for p_trans[,2] to match C code (lines 125-126)
+    p_trans[, 2] <- logistic_clamped(f[, 2])
+  }
+
+  # =============================================================================
+  # Main loop: t = 2 to M - Generalized for K>=2
+  # =============================================================================
+  for (t in 2:M) {
+    # Generate predicted probabilities using generalized formula
+    X_tlag[, t] <- compute_predicted_probs(X_t[, t-1], p_trans[, t], diag_probs = diag_probs)
+
     # Calculate likelihoods
     for (k in 1:K) {
-      eta[k,t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
+      eta[k, t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
     }
-    tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
-    
+    tot_lik[t] <- sum(eta[, t] * X_tlag[, t])
+
     # Protect against numerical issues
     if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
       tot_lik[t] <- .Machine$double.eps
-      X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
+      X_t[, t] <- rep(1/K, K)
     } else {
       # Calculate filtered probabilities
-      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
+      X_t[, t] <- (eta[, t] * X_tlag[, t]) / tot_lik[t]
     }
-    
-    # Calculate GAS score for time t
-    score_result <- calculate_gas_score(
-      y_obs = y[t],
-      mu = mu,
-      sigma2 = sigma2,
-      trans_prob = p_trans[,t],
-      diag_probs = diag_probs,
-      X_pred = X_tlag[,t],
-      gh_setup = gh_setup,
-      scaling_method = scaling_method
-    )
-    
-    # Store score and diagnostics
-    score_scaled[,t+1] <- score_result$scaled_score
-    fisher_info_series[t] <- score_result$fisher_info
-    score_norms[t] <- sqrt(sum(score_result$raw_score^2))
-    
-    # Count zero scores for diagnostics
-    if (all(abs(score_result$scaled_score) < 1e-10)) {
-      zero_score_count <- zero_score_count + 1
+
+    # Only compute score and update f/p_trans if NOT the last time point
+    # C code: if((t<(T[0]-1))) { ... }
+    if (t < M) {
+      # Calculate GAS score for time t
+      # CRITICAL: For t>=2, the g-vector uses FILTERED probs from t-1, not X_tlag!
+      # Original C code (line 170-171):
+      #   g[t*2]   = X_t[(t-1)*2]*p11[t]*(1-p11[t])   <- Uses X_t from t-1
+      #   g[t*2+1] = -X_t[(t-1)*2+1]*p22[t]*(1-p22[t])
+      score_result <- calculate_gas_score(
+        y_obs = y[t],
+        mu = mu,
+        sigma2 = sigma2,
+        trans_prob = p_trans[, t],
+        diag_probs = diag_probs,
+        X_pred = X_t[, t-1],  # Use FILTERED probs from t-1, not X_tlag[, t]!
+        gh_setup = gh_setup,
+        scaling_method = scaling_method
+      )
+
+      # Store score and diagnostics
+      score_scaled[, t+1] <- score_result$scaled_score
+      fisher_info_series[t] <- score_result$fisher_info
+      score_norms[t] <- sqrt(sum(score_result$raw_score^2))
+
+      # Count zero scores for diagnostics
+      if (all(abs(score_result$scaled_score) < 1e-10)) {
+        zero_score_count <- zero_score_count + 1
+      }
+
+      # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
+      f[, t+1] <- omega + A * score_scaled[, t+1] + B * (f[, t] - omega)
+
+      # Convert f to transition probabilities using clamped logistic
+      p_trans[, t+1] <- logistic_clamped(f[, t+1])
     }
-    
-    # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
-    f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
-    
-    # Convert f to transition probabilities using clamped logistic
-    # Matches original HMMGAS: p = 1e-10 + (1-2*1e-10)/(1+exp(-f))
-    p_trans[,t+1] <- logistic_clamped(f[,t+1])
   }
 
-  # Calculate likelihood for the last time point
-  Pmatrix <- transition_matrix(p_trans[,M-1], diag_probs = diag_probs, check_validity = FALSE)
-  X_tlag[,M] <- Pmatrix %*% X_t[,M-1]
-  for (k in 1:K) {
-    eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
-  }
-  tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
-  
-  # Protect against numerical issues
+  # Protect against numerical issues at the last time point
   if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
     tot_lik[M] <- .Machine$double.eps
   }

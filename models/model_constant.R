@@ -81,10 +81,15 @@ dataConstCD <- function(M, N, par, burn_in = 100) {
       rep(1/K, K)
     })
     X_t[,1] <- start_dist
-    
+
+    # Initialize X_tlag[,1] using stationary distribution and transition matrix
+    # For row-stochastic P, prediction is: X_pred = P^T %*% X_prev
+    X_tlag[,1] <- as.vector(t(transition_mat) %*% start_dist)
+
     for (t in 1:(total_length-1)) {
       # Generate predicted probabilities using the constant transition matrix
-      X_tlag[,t] <- transition_mat %*% X_t[,t]
+      # Use transpose because P is row-stochastic: P[i,j] = P(to j | from i)
+      X_tlag[,t] <- as.vector(t(transition_mat) %*% X_t[,t])
       
       # Sample a state based on the predicted probabilities and 
       # simulate data conditional on that state
@@ -102,7 +107,7 @@ dataConstCD <- function(M, N, par, burn_in = 100) {
     }
     
     # For the last time point
-    X_tlag[,total_length] <- transition_mat %*% X_t[,total_length-1]
+    X_tlag[,total_length] <- as.vector(t(transition_mat) %*% X_t[,total_length-1])
     S[total_length] <- sample(1:K, 1, prob=X_tlag[,total_length])
     y.sim[total_length] <- rnorm(1, mu[S[total_length]], sqrt(sigma2[S[total_length]]))
     
@@ -176,10 +181,15 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
     rep(1/K, K)
   })
   X_t[,1] <- start_dist
-  
+
+  # Initialize X_tlag[,1] using stationary distribution and transition matrix
+  # For row-stochastic P, prediction is: X_pred = P^T %*% X_prev
+  X_tlag[,1] <- as.vector(t(transition_mat) %*% start_dist)
+
   for (t in 1:(M-1)) {
     # Generate predicted probabilities using the constant transition matrix
-    X_tlag[,t] <- transition_mat %*% X_t[,t]
+    # Use transpose because P is row-stochastic: P[i,j] = P(to j | from i)
+    X_tlag[,t] <- as.vector(t(transition_mat) %*% X_t[,t])
     
     # Calculate likelihoods
     for (k in 1:K) {
@@ -198,7 +208,7 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   }
   
   # Calculate likelihood for the last time point
-  X_tlag[,M] <- transition_mat %*% X_t[,M-1]
+  X_tlag[,M] <- as.vector(t(transition_mat) %*% X_t[,M-1])
   for (k in 1:K) {
     eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
   }

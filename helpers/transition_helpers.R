@@ -541,3 +541,83 @@ print_transition_matrix <- function(t_mat, digits = 4) {
     cat("Stationary distribution: Could not calculate\n")
   })
 }
+
+#' Compute predicted probabilities from filtered probabilities and transition probs
+#'
+#' @param X_prev Vector of filtered probabilities from previous time step (length K)
+#' @param trans_prob Vector of transition probabilities
+#' @param diag_probs If TRUE, trans_prob contains diagonal elements (p11, p22, ..., pKK)
+#' @return Vector of predicted probabilities (length K)
+#' @details
+#' Computes X_pred = P^T %*% X_prev where P is the transition matrix.
+#'
+#' For HMMs, the standard convention is:
+#' P[i,j] = P(S_t = j | S_{t-1} = i), rows sum to 1 (row-stochastic)
+#' Prediction: P(S_t = j) = sum_i P[i,j] * P(S_{t-1} = i) = (P^T %*% X_{t-1})[j]
+#'
+#' This function handles any K >= 2 with diagonal parameterization by:
+#' 1. Building the full transition matrix with uniform off-diagonal distribution
+#' 2. Computing the matrix-vector product for prediction
+#'
+#' @examples
+#' # K=2 example
+#' X_prev <- c(0.6, 0.4)
+#' trans_prob <- c(0.9, 0.8)  # p11, p22
+#' X_pred <- compute_predicted_probs(X_prev, trans_prob, diag_probs = TRUE)
+#'
+#' # K=3 example
+#' X_prev <- c(0.5, 0.3, 0.2)
+#' trans_prob <- c(0.8, 0.7, 0.9)  # p11, p22, p33
+#' X_pred <- compute_predicted_probs(X_prev, trans_prob, diag_probs = TRUE)
+compute_predicted_probs <- function(X_prev, trans_prob, diag_probs = TRUE) {
+  # Build full transition matrix
+  P <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = FALSE)
+
+  # Compute predicted probabilities: X_pred = P^T %*% X_prev
+  # This is because P[i,j] = P(to j | from i), so we need to sum over "from" states
+  X_pred <- as.vector(t(P) %*% X_prev)
+
+  # Ensure valid probabilities (numerical stability)
+  X_pred <- pmax(X_pred, .Machine$double.eps)
+  X_pred <- X_pred / sum(X_pred)
+
+  return(X_pred)
+}
+
+#' Compute initial predicted probabilities using stationary distribution
+#'
+#' @param trans_prob Vector of transition probabilities
+#' @param diag_probs If TRUE, trans_prob contains diagonal elements
+#' @return Vector of initial predicted probabilities (length K)
+#' @details
+#' For HMM initialization, computes X_tlag[1] = P^T %*% stationary_dist.
+#' This gives the probability of being in each state at t=1 given we start
+#' from the stationary distribution.
+#'
+#' Works for any K >= 2 by using eigenvalue-based stationary distribution
+#' calculation.
+#'
+#' @examples
+#' # K=2 example
+#' trans_prob <- c(0.9, 0.8)  # p11, p22
+#' X_tlag_init <- compute_initial_predicted_probs(trans_prob, diag_probs = TRUE)
+#'
+#' # K=3 example
+#' trans_prob <- c(0.8, 0.7, 0.9)  # p11, p22, p33
+#' X_tlag_init <- compute_initial_predicted_probs(trans_prob, diag_probs = TRUE)
+compute_initial_predicted_probs <- function(trans_prob, diag_probs = TRUE) {
+  # Build full transition matrix
+  P <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = FALSE)
+
+  # Compute stationary distribution
+  stationary <- stat_dist(P)
+
+  # Compute initial predicted probabilities: X_tlag[1] = P^T %*% stationary
+  X_tlag_init <- as.vector(t(P) %*% stationary)
+
+  # Ensure valid probabilities
+  X_tlag_init <- pmax(X_tlag_init, .Machine$double.eps)
+  X_tlag_init <- X_tlag_init / sum(X_tlag_init)
+
+  return(X_tlag_init)
+}
