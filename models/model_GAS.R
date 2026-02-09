@@ -21,7 +21,7 @@ source("models/model_constant.R")
 #' @param par Parameter vector with attributes (mu, sigma2, init_trans, A, B)
 #' @param burn_in Number of burn-in observations to discard (default: 100)
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
-#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
+#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "factored")
 #' @param quad_sample_size Sample size for creating representative data for quadrature setup (default: 1000)
 #' @return Matrix of simulated data with M rows and N columns
 #' @details 
@@ -213,7 +213,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' @param B_burnin Burn-in to be excluded at the beginning of the time series
 #' @param C Cut-off to be excluded at the end of the time series
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
-#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "original")
+#' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "factored")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
 #' @param diagnostics If TRUE, include detailed diagnostic information (default: FALSE)
@@ -531,7 +531,7 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
     cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
     cat("Starting points:", n_starts, "\n")
     effective_scaling <- if (is.null(scaling_method)) {
-      if (diag_probs) "original (auto)" else "simple (auto)"
+      if (diag_probs) "factored (auto)" else "simple (auto)"
     } else {
       scaling_method
     }

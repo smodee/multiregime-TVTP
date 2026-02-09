@@ -253,10 +253,24 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #'                   if FALSE, contains off-diagonal elements
 #' @param X_pred Predicted probabilities before observation (length K)
 #' @param gh_setup Gauss-Hermite quadrature setup from setup_gauss_hermite_quadrature()
-#' @param scaling_method Method for scaling. Options: "original", "simple", "normalized",
+#' @param scaling_method Method for scaling. Options: "factored", "simple", "normalized",
 #'        "moore_penrose". If NULL (default), auto-selects based on diag_probs:
-#'        "original" for diagonal parameterization (matches HMMGAS),
+#'        "factored" for diagonal parameterization (matches HMMGAS),
 #'        "simple" for off-diagonal parameterization.
+#'
+#'        Scaling methods:
+#'        \itemize{
+#'          \item "factored": Factors the score into magnitude (S*) times direction (g-normalized).
+#'                Uses S* = S/sqrt(I) where S is the likelihood ratio score, and multiplies
+#'                by a normalized g-vector that encodes gradient direction based on filtered
+#'                probabilities and transition probabilities. This matches the original HMMGAS
+#'                methodology and is recommended for diagonal parameterization.
+#'          \item "simple": Basic inverse Fisher scaling using 1/sqrt(I). General purpose.
+#'          \item "normalized": Normalizes the raw score vector to unit length, then scales
+#'                by 1/sqrt(I). Treats all score components uniformly.
+#'          \item "moore_penrose": Uses Moore-Penrose pseudoinverse. EXPERIMENTAL - can cause
+#'                optimization failures.
+#'        }
 #' @return List with components:
 #'   \itemize{
 #'     \item scaled_score: Properly scaled score vector (length matches trans_prob)
@@ -278,7 +292,7 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #' This implementation generalizes the original 2-regime methodology to K regimes
 #' while maintaining the mathematical foundation and numerical stability.
 #'
-#' When diag_probs=TRUE, the default scaling_method is "original", which produces
+#' When diag_probs=TRUE, the default scaling_method is "factored", which produces
 #' results identical to the original HMMGAS C implementation (Filtering_2RegimesGAS.c)
 #' for K=2.
 #'
@@ -294,7 +308,7 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #' X_pred <- c(0.6, 0.4)
 #' y_obs <- 0.5
 #'
-#' # Calculate scaled score (uses "original" by default for diag_probs=TRUE)
+#' # Calculate scaled score (uses "factored" by default for diag_probs=TRUE)
 #' result <- calculate_gas_score(y_obs, mu, sigma2, trans_prob,
 #'                               diag_probs = TRUE, X_pred, gh_setup)
 #' result$scaled_score  # The score vector
@@ -324,17 +338,17 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
   }
 
   # Auto-select scaling method based on parameterization if not specified
-  # - "original" for diagonal (matches HMMGAS methodology)
-  # - "simple" for off-diagonal (original method doesn't apply)
+  # - "factored" for diagonal (matches HMMGAS methodology)
+  # - "simple" for off-diagonal (factored method doesn't apply)
   if (is.null(scaling_method)) {
-    scaling_method <- if (diag_probs) "original" else "simple"
+    scaling_method <- if (diag_probs) "factored" else "simple"
   }
 
   if (scaling_method == "moore_penrose") {
     warning(
       paste(
         "WARNING: scaling_method='moore_penrose' is EXPERIMENTAL.",
-        "For parameter estimation, use 'simple' or 'original' instead.",
+        "For parameter estimation, use 'simple' or 'factored' instead.",
         "Moore-Penrose scaling can cause optimization failures."
       ),
       call. = FALSE
@@ -358,7 +372,7 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
     stop("X_pred must be valid probabilities that sum to 1")
   }
 
-  scaling_method <- match.arg(scaling_method, c("simple", "normalized", "original", "moore_penrose"))
+  scaling_method <- match.arg(scaling_method, c("simple", "normalized", "factored", "moore_penrose"))
 
   # Step 1: Calculate regime likelihoods for the current observation
   eta <- numeric(K)
@@ -410,9 +424,9 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
     raw_score <- calculate_raw_score_diagonal(eta, tot_lik, X_t_prev, trans_prob, K)
 
     # Apply scaling based on method
-    if (scaling_method == "original") {
-      # Use the EXACT methodology from HMMGAS C code
-      scaled_score <- calculate_original_scaling(eta, tot_lik, X_t_prev, trans_prob, fisher_info, K)
+    if (scaling_method == "factored") {
+      # Use the EXACT methodology from HMMGAS C code (factored into magnitude * direction)
+      scaled_score <- calculate_factored_scaling(eta, tot_lik, X_t_prev, trans_prob, fisher_info, K)
     } else {
       # Use alternative scaling methods
       scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, scaling_method)
@@ -435,11 +449,11 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
     fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, trans_prob, gh_setup, K)
 
     # Apply scaling
-    # NOTE: "original" scaling method is only valid for diagonal parameterization
+    # NOTE: "factored" scaling method is only valid for diagonal parameterization
     # (it's based on the HMMGAS C code which uses p11, p22 structure)
     # For off-diagonal, we always use simple/normalized scaling
-    if (scaling_method == "original") {
-      warning("scaling_method='original' is only valid for diagonal parameterization. Using 'simple' instead.")
+    if (scaling_method == "factored") {
+      warning("scaling_method='factored' is only valid for diagonal parameterization. Using 'simple' instead.")
       scaling_method <- "simple"
     }
     scaled_score <- apply_moore_penrose_scaling(raw_score, fisher_info, scaling_method)
@@ -593,7 +607,7 @@ calculate_raw_score_diagonal <- function(eta, tot_lik, X_t_prev, p_diag, K) {
 #' @param gh_setup Gauss-Hermite quadrature setup
 #' @param diag_probs If TRUE, use diagonal parameterization (default: TRUE)
 #' @param scaling_method Scaling method to use. If NULL (default), auto-selects
-#'        based on diag_probs: "original" for diagonal, "simple" for off-diagonal.
+#'        based on diag_probs: "factored" for diagonal, "simple" for off-diagonal.
 #' @param verbose Whether to show progress
 #' @return Matrix of scaled scores (T x n_transition)
 #' @details
@@ -853,7 +867,7 @@ apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "simple
   return(scaled_score)
 }
 
-#' Calculate score using original HMMGAS methodology (DIAGONAL PARAMETERIZATION ONLY)
+#' Calculate score using factored scaling (DIAGONAL PARAMETERIZATION ONLY)
 #'
 #' @param eta Vector of regime likelihoods (length K)
 #' @param tot_lik Total likelihood scalar
@@ -861,15 +875,23 @@ apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "simple
 #' @param p_trans Diagonal transition probabilities (p11, p22, ..., pKK) - length K
 #' @param fisher_info Fisher Information scalar
 #' @param K Number of regimes
-#' @return Scaled score vector matching original HMMGAS C implementation (length K)
+#' @return Scaled score vector (length K)
 #' @details
 #' IMPORTANT: This function is ONLY valid for diagonal parameterization (diag_probs=TRUE).
 #' For off-diagonal parameterization, use apply_moore_penrose_scaling() instead.
 #'
-#' This function implements the EXACT methodology from the original HMMGAS C code
-#' (Filtering_2RegimesGAS.c). The key steps are:
+#' This "factored" scaling method separates the score into two components:
+#' - Magnitude: S* = S / sqrt(I), where S is the likelihood ratio score
+#' - Direction: g-normalized, a unit vector encoding the gradient direction
 #'
-#' 1. Calculate a single scalar S = (eta[1] - eta[K]) / tot_lik
+#' The final score is computed as: scaled_score = S* × g_normalized
+#'
+#' This factorization has a natural interpretation: S* captures "how much news"
+#' arrived, while g_normalized determines "which direction to update."
+#'
+#' Implementation steps (matching HMMGAS C code in Filtering_2RegimesGAS.c):
+#'
+#' 1. Calculate scalar S = (eta[1] - eta[K]) / tot_lik
 #' 2. Build g-vector with ALTERNATING SIGNS:
 #'    - g[1] = +X_t_prev[1] * p11 * (1-p11)  (positive)
 #'    - g[2] = -X_t_prev[2] * p22 * (1-p22)  (negative)
@@ -880,7 +902,7 @@ apply_moore_penrose_scaling <- function(raw_score, fisher_info, method = "simple
 #' For K=2 with diag_probs=TRUE, this produces identical results to the
 #' original HMMGAS C implementation. For K>2, this generalizes by using
 #' S = (eta[1] - eta[K]) / tot_lik and alternating signs on the g-vector.
-calculate_original_scaling <- function(eta, tot_lik, X_t_prev, p_trans, fisher_info, K) {
+calculate_factored_scaling <- function(eta, tot_lik, X_t_prev, p_trans, fisher_info, K) {
   # Validate inputs
   if (!is.numeric(eta) || length(eta) != K) {
     stop("eta must be a numeric vector of length K")
@@ -896,7 +918,7 @@ calculate_original_scaling <- function(eta, tot_lik, X_t_prev, p_trans, fisher_i
   }
   # CRITICAL: This function only works for diagonal parameterization
   if (length(p_trans) != K) {
-    stop(sprintf("calculate_original_scaling only supports diagonal parameterization. Expected p_trans length %d (K), got %d. Use apply_moore_penrose_scaling for off-diagonal.", K, length(p_trans)))
+    stop(sprintf("calculate_factored_scaling only supports diagonal parameterization. Expected p_trans length %d (K), got %d. Use apply_moore_penrose_scaling for off-diagonal.", K, length(p_trans)))
   }
 
   # Step 1: Calculate single scalar S (like original C code)
