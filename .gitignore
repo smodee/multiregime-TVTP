@@ -24,6 +24,7 @@
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
+inst/doc/
 
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
@@ -48,17 +49,18 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-# Results
-results/*
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Results output
+results/
 
 # Claude Code
 .claude/
 
-# Legacy HMMGAS package (external dependency)
-legacy/Bazzi HMMGAS/
+# Legacy reference implementation (development only)
+legacy/
 
-# Development-only test files (not needed for released package)
+# Development/diagnostic tests (not needed for released package)
 tests/diagnostics/
-tests/verification_study_script.r
-tests/original_verification_script.r
-tests/comparison_analysis.r
