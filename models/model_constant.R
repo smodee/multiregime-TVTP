@@ -166,7 +166,10 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   
   # Create transition matrix using the appropriate parameterization
   transition_mat <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = TRUE)
-  
+
+  # Pre-compute transpose for prediction step (avoids repeated transpose in loop)
+  transition_mat_T <- t(transition_mat)
+
   # Initialize variables
   tot_lik <- numeric(M)                # Total likelihood
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
@@ -192,12 +195,12 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
 
   # Initialize X_tlag[,1] using stationary distribution and transition matrix
   # For row-stochastic P, prediction is: X_pred = P^T %*% X_prev
-  X_tlag[,1] <- as.vector(t(transition_mat) %*% start_dist)
+  X_tlag[,1] <- as.vector(transition_mat_T %*% start_dist)
 
   for (t in 1:(M-1)) {
     # Generate predicted probabilities using the constant transition matrix
-    # Use transpose because P is row-stochastic: P[i,j] = P(to j | from i)
-    X_tlag[,t] <- as.vector(t(transition_mat) %*% X_t[,t])
+    # Use pre-computed transpose for efficiency
+    X_tlag[,t] <- as.vector(transition_mat_T %*% X_t[,t])
 
     # Note: eta[,t] already computed in vectorized pre-computation above
     tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
@@ -213,7 +216,7 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   }
   
   # Calculate likelihood for the last time point
-  X_tlag[,M] <- as.vector(t(transition_mat) %*% X_t[,M-1])
+  X_tlag[,M] <- as.vector(transition_mat_T %*% X_t[,M-1])
   # Note: eta[,M] already computed in vectorized pre-computation above
   tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
   
