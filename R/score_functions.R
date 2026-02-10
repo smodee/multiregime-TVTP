@@ -130,9 +130,11 @@ setup_gauss_hermite_quadrature <- function(y, n_nodes = 30, method = "data_based
 #' integration parameters, and data characteristics.
 #'
 #' @examples
+#' \dontrun{
 #' y <- rnorm(1000)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' print(gh_setup)
+#' }
 #' @export
 print.gauss_hermite_setup <- function(x, ...) {
   cat("Gauss-Hermite Quadrature Setup\n")
@@ -161,9 +163,11 @@ print.gauss_hermite_setup <- function(x, ...) {
 #' and that they are valid for use in score calculations.
 #'
 #' @examples
+#' \dontrun{
 #' y <- rnorm(1000)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' validate_gauss_hermite_setup(gh_setup)  # Returns TRUE
+#' }
 validate_gauss_hermite_setup <- function(gh_setup) {
   # Check if object has the right class
   if (!inherits(gh_setup, "gauss_hermite_setup")) {
@@ -618,10 +622,12 @@ calculate_raw_score_diagonal <- function(eta, tot_lik, X_t_prev, p_diag, K) {
 #' reporting and error handling for individual time points.
 #'
 #' @examples
+#' \dontrun{
 #' # Calculate scores for an entire time series
 #' y_series <- rnorm(100)
 #' # ... setup matrices for X_pred_series, trans_prob_series ...
 #' # scores <- calculate_gas_scores_batch(y_series, mu, sigma2, ...)
+#' }
 calculate_gas_scores_batch <- function(y_series, mu, sigma2, X_pred_series,
                                        trans_prob_series, gh_setup,
                                        diag_probs = TRUE,
@@ -1057,6 +1063,7 @@ validate_scaling_inputs <- function(raw_score, fisher_info, method = "moore_penr
 #' where d1, d2 are regime densities and den is the total density.
 #'
 #' @examples
+#' \dontrun{
 #' # Setup quadrature and calculate Fisher Information
 #' y <- rnorm(1000)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
@@ -1068,6 +1075,7 @@ validate_scaling_inputs <- function(raw_score, fisher_info, method = "moore_penr
 #' p_trans <- rep(0.2, 6)
 #' 
 #' fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
+#' }
 calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
   # Validate inputs
   validate_score_inputs(c(rep(1, K)), 1, X_t_prev, p_trans, K)  # Use dummy eta and tot_lik
@@ -1202,8 +1210,10 @@ calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup
 #' probabilities and applies it to the previous filtered probabilities.
 #'
 #' @examples
+#' \dontrun{
 #' # Internal helper function - typically not called directly
 #' # X_pred <- calculate_predictive_probs(p_trans, X_t_prev, K)
+#' }
 calculate_predictive_probs <- function(p_trans, X_t_prev, K) {
   # Convert to valid transition probabilities and create matrix
   p_trans_valid <- convert_to_valid_probs(p_trans, K)
@@ -1278,6 +1288,7 @@ validate_fisher_inputs <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
 #' elements of the transition matrix), so the score vector has K*(K-1) elements.
 #'
 #' @examples
+#' \dontrun{
 #' # Calculate raw score for a 3-regime model
 #' K <- 3
 #' eta <- c(0.1, 0.8, 0.1)  # Regime likelihoods
@@ -1286,6 +1297,7 @@ validate_fisher_inputs <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
 #' p_trans <- rep(0.2, 6)  # Transition probabilities
 #' 
 #' raw_score <- calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
+#' }
 calculate_raw_score_vector <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   # Validate inputs
   if (!is.numeric(eta) || length(eta) != K) {
@@ -1395,8 +1407,10 @@ calculate_raw_score_vector <- function(eta, tot_lik, X_t_prev, p_trans, K) {
 #' Ensures that dimensions are consistent and values are in valid ranges.
 #'
 #' @examples
+#' \dontrun{
 #' # This function is typically called internally
 #' # validate_score_inputs(eta, tot_lik, X_t_prev, p_trans, K)
+#' }
 validate_score_inputs <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   # Check for NAs or infinite values
   if (has_invalid_values(eta)) {

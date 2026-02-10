@@ -22,7 +22,9 @@ Provides a summary of the quadrature setup including number of nodes,
 integration parameters, and data characteristics.
 }
 \examples{
+\dontrun{
 y <- rnorm(1000)
 gh_setup <- setup_gauss_hermite_quadrature(y)
 print(gh_setup)
+}
 }

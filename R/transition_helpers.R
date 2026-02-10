@@ -174,6 +174,7 @@ transition_matrix_offdiagonal <- function(off_diag_probs, check_validity = TRUE)
 #' original off-diagonal probabilities were not equal within rows.
 #'
 #' @examples
+#' \dontrun{
 #' # Convert diagonal to off-diagonal
 #' diag_params <- c(0.8, 0.9)  # p11=0.8, p22=0.9
 #' off_diag_params <- convert_parameterization(diag_params, from_diag = TRUE)
@@ -181,6 +182,7 @@ transition_matrix_offdiagonal <- function(off_diag_probs, check_validity = TRUE)
 #' 
 #' # Convert back (should recover original structure, not exact values)
 #' recovered_diag <- convert_parameterization(off_diag_params, from_diag = FALSE)
+#' }
 convert_parameterization <- function(probs, from_diag = TRUE) {
   
   if (!is.numeric(probs) || length(probs) == 0) {

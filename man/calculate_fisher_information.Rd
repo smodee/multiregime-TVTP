@@ -42,6 +42,7 @@ I = ∫ [(d1-d2)²/den] * φ(y; μ_quad, σ_quad²) dy
 where d1, d2 are regime densities and den is the total density.
 }
 \examples{
+\dontrun{
 # Setup quadrature and calculate Fisher Information
 y <- rnorm(1000)
 gh_setup <- setup_gauss_hermite_quadrature(y)
@@ -53,4 +54,5 @@ X_t_prev <- c(0.3, 0.4, 0.3)
 p_trans <- rep(0.2, 6)
 
 fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
+}
 }

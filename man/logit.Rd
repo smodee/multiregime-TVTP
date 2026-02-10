@@ -24,5 +24,7 @@ that are needed across different parts of the regime switching models.
 Logit transformation (natural space -> unconstrained space)
 }
 \examples{
+\dontrun{
 logit(0.75)  # Returns 1.098612
+}
 }

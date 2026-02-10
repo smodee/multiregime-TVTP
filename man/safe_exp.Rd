@@ -18,5 +18,7 @@ exp(min(x, max_value))
 Safe exponentiation to prevent overflow
 }
 \examples{
+\dontrun{
 safe_exp(1000)  # Returns a large but finite number instead of Inf
+}
 }

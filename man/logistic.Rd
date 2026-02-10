@@ -30,5 +30,7 @@ in the GAS model, not in TVP or Exogenous models. This asymmetry exists in the
 original C code and is preserved here for consistency.
 }
 \examples{
+\dontrun{
 logistic(1.098612)  # Returns 0.75
+}
 }

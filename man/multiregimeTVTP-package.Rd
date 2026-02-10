@@ -9,7 +9,7 @@
 Implements regime-switching models with time-varying transition probabilities. Supports constant, autoregressive (TVP), exogenous variable-driven, and score-driven (GAS) transition dynamics following Bazzi et al. (2017). Handles arbitrary K-regime models with both diagonal and off-diagonal transition probability parameterizations.
 }
 \author{
-\strong{Maintainer}: Samuel Modée \email{samuelmodee@gmail.com}
+\strong{Maintainer}: Samuel Modee \email{samuelmodee@gmail.com}
 
 }
 \keyword{internal}

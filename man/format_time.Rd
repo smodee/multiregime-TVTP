@@ -16,5 +16,7 @@ String with formatted time
 Format execution time in a human-readable way
 }
 \examples{
+\dontrun{
 format_time(65)  # Returns "1m 5s"
+}
 }

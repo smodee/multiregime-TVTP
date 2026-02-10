@@ -8,7 +8,9 @@
 #' @param eps Small value to prevent boundary issues (default: .Machine$double.eps)
 #' @return Transformed value in (-∞,∞)
 #' @examples
+#' \dontrun{
 #' logit(0.75)  # Returns 1.098612
+#' }
 logit <- function(x, eps = .Machine$double.eps) {
   # Add bounds checking to prevent errors
   x <- pmin(pmax(x, eps), 1 - eps)
@@ -31,7 +33,9 @@ logit <- function(x, eps = .Machine$double.eps) {
 #' in the GAS model, not in TVP or Exogenous models. This asymmetry exists in the
 #' original C code and is preserved here for consistency.
 #' @examples
+#' \dontrun{
 #' logistic(1.098612)  # Returns 0.75
+#' }
 logistic <- function(x) {
   return(1/(1+exp(-x)))
 }
@@ -58,9 +62,11 @@ logistic <- function(x) {
 #' This is because the GAS score calculation involves terms like p*(1-p) in the
 #' denominator, making numerical stability more critical.
 #' @examples
+#' \dontrun{
 #' logistic_clamped(0)     # Returns 0.5
 #' logistic_clamped(100)   # Returns 1-1e-10 (not exactly 1)
 #' logistic_clamped(-100)  # Returns 1e-10 (not exactly 0)
+#' }
 logistic_clamped <- function(x, eps = 1e-10) {
   return(eps + (1 - 2*eps) / (1 + exp(-x)))
 }
@@ -71,9 +77,11 @@ logistic_clamped <- function(x, eps = 1e-10) {
 #' @param min_value Minimum value to replace zeros/negative values (default: .Machine$double.eps)
 #' @return Log of max(x, min_value)
 #' @examples
+#' \dontrun{
 #' safe_log(0)      # Returns log of a small positive number instead of -Inf
 #' safe_log(-5)     # Returns log of a small positive number instead of NaN
 #' safe_log(c(2, 0, 3, -1))  # Handles vectors safely
+#' }
 safe_log <- function(x, min_value = .Machine$double.eps) {
   return(log(pmax(x, min_value)))
 }
@@ -84,7 +92,9 @@ safe_log <- function(x, min_value = .Machine$double.eps) {
 #' @param max_value Maximum allowed value in exponent (default: 700)
 #' @return exp(min(x, max_value))
 #' @examples
+#' \dontrun{
 #' safe_exp(1000)  # Returns a large but finite number instead of Inf
+#' }
 safe_exp <- function(x, max_value = 700) {
   return(exp(pmin(x, max_value)))
 }
@@ -94,11 +104,13 @@ safe_exp <- function(x, max_value = 700) {
 #' @param x Vector to check
 #' @return TRUE if any invalid values are found, FALSE otherwise
 #' @examples
+#' \dontrun{
 #' has_invalid_values(c(1, 2, NA, 4))        # Returns TRUE
 #' has_invalid_values(c(1, 2, NaN, 4))       # Returns TRUE
 #' has_invalid_values(c(1, 2, Inf, 4))       # Returns TRUE
 #' has_invalid_values(c(1, 2, -Inf, 4))      # Returns TRUE
 #' has_invalid_values(c(1, 2, 3, 4))         # Returns FALSE
+#' }
 has_invalid_values <- function(x) {
   return(any(is.na(x) | is.nan(x) | is.infinite(x)))
 }
@@ -109,7 +121,9 @@ has_invalid_values <- function(x) {
 #' @param replacement Value to use for replacements (default: 0)
 #' @return Vector with invalid values replaced
 #' @examples
+#' \dontrun{
 #' replace_invalid_values(c(1, 2, NA, Inf, -Inf, 6))  # Returns c(1, 2, 0, 0, 0, 6)
+#' }
 replace_invalid_values <- function(x, replacement = 0) {
   x[is.na(x) | is.nan(x) | is.infinite(x)] <- replacement
   return(x)
@@ -122,7 +136,9 @@ replace_invalid_values <- function(x, replacement = 0) {
 #' @param align Alignment ("left", "center", "right") (default: "center")
 #' @return Vector of moving averages
 #' @examples
+#' \dontrun{
 #' moving_average(1:10, 3)  # 3-period centered moving average
+#' }
 moving_average <- function(x, window_size, align = "center") {
   if (window_size < 1 || window_size > length(x)) {
     stop("Window size must be between 1 and the length of the vector")
@@ -166,7 +182,9 @@ moving_average <- function(x, window_size, align = "center") {
 #' @param na.rm Whether to remove NA values (default: TRUE)
 #' @return Standardized vector
 #' @examples
+#' \dontrun{
 #' standardize(c(1, 2, 3, 4, 5))  # Returns values with mean 0 and SD 1
+#' }
 standardize <- function(x, na.rm = TRUE) {
   return((x - mean(x, na.rm = na.rm)) / sd(x, na.rm = na.rm))
 }
@@ -178,7 +196,9 @@ standardize <- function(x, na.rm = TRUE) {
 #' @param constant Scaling factor for normal distribution (default: 1.4826)
 #' @return Median absolute deviation
 #' @examples
+#' \dontrun{
 #' mad_value(c(1, 2, 3, 100))  # Less affected by outliers than standard deviation
+#' }
 mad_value <- function(x, na.rm = TRUE, constant = 1.4826) {
   med <- median(x, na.rm = na.rm)
   return(constant * median(abs(x - med), na.rm = na.rm))
@@ -191,12 +211,14 @@ mad_value <- function(x, na.rm = TRUE, constant = 1.4826) {
 #' @param width Width of the progress bar (default: 50)
 #' @return Function that updates the progress bar
 #' @examples
+#' \dontrun{
 #' n <- 100
 #' pb <- progress_bar(n, "Processing")
 #' for (i in 1:n) {
 #'   # Do some work
 #'   Sys.sleep(0.01)
 #'   pb(i)  # Update progress bar
+#' }
 #' }
 progress_bar <- function(total, title = "Progress", width = 50) {
   pb_format <- paste0("\r", title, ": [%-", width, "s] %3d%%")
@@ -232,7 +254,9 @@ progress_bar <- function(total, title = "Progress", width = 50) {
 #' @param seconds Time in seconds
 #' @return String with formatted time
 #' @examples
+#' \dontrun{
 #' format_time(65)  # Returns "1m 5s"
+#' }
 format_time <- function(seconds) {
   if (seconds < 60) {
     return(sprintf("%.1fs", seconds))

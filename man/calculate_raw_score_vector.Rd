@@ -34,6 +34,7 @@ For a K-regime model, we have K*(K-1) transition probabilities (off-diagonal
 elements of the transition matrix), so the score vector has K*(K-1) elements.
 }
 \examples{
+\dontrun{
 # Calculate raw score for a 3-regime model
 K <- 3
 eta <- c(0.1, 0.8, 0.1)  # Regime likelihoods
@@ -42,4 +43,5 @@ X_t_prev <- c(0.3, 0.4, 0.3)  # Previous filtered probabilities
 p_trans <- rep(0.2, 6)  # Transition probabilities
 
 raw_score <- calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
+}
 }

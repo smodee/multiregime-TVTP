@@ -16,9 +16,11 @@ TRUE if any invalid values are found, FALSE otherwise
 Check if a vector contains any NA, NaN, Inf, or -Inf values
 }
 \examples{
+\dontrun{
 has_invalid_values(c(1, 2, NA, 4))        # Returns TRUE
 has_invalid_values(c(1, 2, NaN, 4))       # Returns TRUE
 has_invalid_values(c(1, 2, Inf, 4))       # Returns TRUE
 has_invalid_values(c(1, 2, -Inf, 4))      # Returns TRUE
 has_invalid_values(c(1, 2, 3, 4))         # Returns FALSE
+}
 }

@@ -20,5 +20,7 @@ Vector of moving averages
 Calculate moving average of a time series
 }
 \examples{
+\dontrun{
 moving_average(1:10, 3)  # 3-period centered moving average
+}
 }

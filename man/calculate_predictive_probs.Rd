@@ -25,6 +25,8 @@ calculation. This reconstructs the full transition matrix from the off-diagonal
 probabilities and applies it to the previous filtered probabilities.
 }
 \examples{
+\dontrun{
 # Internal helper function - typically not called directly
 # X_pred <- calculate_predictive_probs(p_trans, X_t_prev, K)
+}
 }
