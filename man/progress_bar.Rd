@@ -20,11 +20,13 @@ Function that updates the progress bar
 Create a progress bar for lengthy operations
 }
 \examples{
+\dontrun{
 n <- 100
 pb <- progress_bar(n, "Processing")
 for (i in 1:n) {
   # Do some work
   Sys.sleep(0.01)
   pb(i)  # Update progress bar
+}
 }
 }

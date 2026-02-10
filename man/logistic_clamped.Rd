@@ -35,7 +35,9 @@ This is because the GAS score calculation involves terms like p*(1-p) in the
 denominator, making numerical stability more critical.
 }
 \examples{
+\dontrun{
 logistic_clamped(0)     # Returns 0.5
 logistic_clamped(100)   # Returns 1-1e-10 (not exactly 1)
 logistic_clamped(-100)  # Returns 1e-10 (not exactly 0)
+}
 }

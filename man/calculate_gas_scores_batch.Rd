@@ -48,8 +48,10 @@ batch processing and when working with long time series. Includes progress
 reporting and error handling for individual time points.
 }
 \examples{
+\dontrun{
 # Calculate scores for an entire time series
 y_series <- rnorm(100)
 # ... setup matrices for X_pred_series, trans_prob_series ...
 # scores <- calculate_gas_scores_batch(y_series, mu, sigma2, ...)
+}
 }

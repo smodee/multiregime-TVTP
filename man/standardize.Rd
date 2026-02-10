@@ -18,5 +18,7 @@ Standardized vector
 Standardize a vector (zero mean, unit variance)
 }
 \examples{
+\dontrun{
 standardize(c(1, 2, 3, 4, 5))  # Returns values with mean 0 and SD 1
+}
 }

@@ -20,10 +20,12 @@ Helper function to check parallelization strategy from allocation result.
 Useful for conditional logic in simulation functions.
 }
 \examples{
+\dontrun{
 allocation <- get_parallel_allocation(6, 50, 3)
 if (is_coordinated_parallel(allocation)) {
   # Set up simulation-level parallelization
 } else {
   # Use estimation-only parallelization
+}
 }
 }

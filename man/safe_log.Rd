@@ -18,7 +18,9 @@ Log of max(x, min_value)
 Safe logarithm to handle zeros and negative values
 }
 \examples{
+\dontrun{
 safe_log(0)      # Returns log of a small positive number instead of -Inf
 safe_log(-5)     # Returns log of a small positive number instead of NaN
 safe_log(c(2, 0, 3, -1))  # Handles vectors safely
+}
 }

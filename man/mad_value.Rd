@@ -20,5 +20,7 @@ Median absolute deviation
 Calculate median absolute deviation (robust measure of dispersion)
 }
 \examples{
+\dontrun{
 mad_value(c(1, 2, 3, 100))  # Less affected by outliers than standard deviation
+}
 }

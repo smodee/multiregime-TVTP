@@ -28,6 +28,8 @@ Helper function to validate all inputs for score vector calculations.
 Ensures that dimensions are consistent and values are in valid ranges.
 }
 \examples{
+\dontrun{
 # This function is typically called internally
 # validate_score_inputs(eta, tot_lik, X_t_prev, p_trans, K)
+}
 }

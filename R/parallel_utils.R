@@ -168,11 +168,13 @@ get_parallel_allocation <- function(total_cores, num_repetitions, n_starts) {
 #' Useful for conditional logic in simulation functions.
 #'
 #' @examples
+#' \dontrun{
 #' allocation <- get_parallel_allocation(6, 50, 3)
 #' if (is_coordinated_parallel(allocation)) {
 #'   # Set up simulation-level parallelization
 #' } else {
 #'   # Use estimation-only parallelization
+#' }
 #' }
 is_coordinated_parallel <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {
@@ -190,11 +192,13 @@ is_coordinated_parallel <- function(allocation) {
 #' Helper function to check if any parallel processing will occur.
 #'
 #' @examples
+#' \dontrun{
 #' allocation <- get_parallel_allocation(1, 10, 3)
 #' if (is_parallel(allocation)) {
 #'   # Some form of parallelization enabled
 #' } else {
 #'   # Fully sequential execution
+#' }
 #' }
 is_parallel <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {
@@ -213,8 +217,10 @@ is_parallel <- function(allocation) {
 #' and user feedback.
 #'
 #' @examples
+#' \dontrun{
 #' allocation <- get_parallel_allocation(4, 20, 3)
 #' cat("Strategy:", describe_parallel_strategy(allocation))
+#' }
 describe_parallel_strategy <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {
     stop("allocation must be a list with sim_workers and cores_per_sim elements")

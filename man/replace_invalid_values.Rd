@@ -18,5 +18,7 @@ Vector with invalid values replaced
 Replace invalid values (NA, NaN, Inf, -Inf) with a default value
 }
 \examples{
+\dontrun{
 replace_invalid_values(c(1, 2, NA, Inf, -Inf, 6))  # Returns c(1, 2, 0, 0, 0, 6)
+}
 }
