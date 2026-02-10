@@ -2,8 +2,10 @@ Package: multiregimeTVTP
 Title: Multi-Regime Time-Varying Transition Probability Models
 Version: 0.1.0
 Authors@R:
-    person("Samuel", "Modée", role = c("aut", "cre"),
+    person("Samuel", "Modee", role = c("aut", "cre"),
            email = "samuelmodee@gmail.com")
+Author: Samuel Modee [aut, cre]
+Maintainer: Samuel Modee <samuelmodee@gmail.com>
 Description: Implements regime-switching models with time-varying transition
     probabilities. Supports constant, autoregressive (TVP), exogenous
     variable-driven, and score-driven (GAS) transition dynamics following
