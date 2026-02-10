@@ -17,8 +17,8 @@ source("helpers/utility_functions.R")
 source("helpers/transition_helpers.R")
 
 # Check for required package
-if (!require(fastGHQuad, quietly = TRUE)) {
-  stop("Package 'fastGHQuad' is required for GAS score calculations. Please install it with: install.packages('fastGHQuad')")
+if (!requireNamespace("statmod", quietly = TRUE)) {
+  stop("Package 'statmod' is required for GAS score calculations. Please install it with: install.packages('statmod')")
 }
 
 #' Setup Gauss-Hermite quadrature for GAS score scaling
@@ -55,65 +55,47 @@ setup_gauss_hermite_quadrature <- function(y, n_nodes = 30, method = "data_based
   if (!is.numeric(y) || length(y) == 0) {
     stop("Input 'y' must be a non-empty numeric vector")
   }
-  
+
   if (!is.numeric(n_nodes) || n_nodes < 2 || n_nodes != as.integer(n_nodes)) {
     stop("Input 'n_nodes' must be an integer >= 2")
   }
-  
+
   method <- match.arg(method, c("data_based", "standardized"))
-  
+
   # Check for invalid values in y and clean data
   if (has_invalid_values(y)) {
     warning("Input data contains NA, NaN, or infinite values. These will be removed.")
     y_clean <- y[!is.na(y) & !is.nan(y) & is.finite(y)]
-    
+
     if (length(y_clean) == 0) {
       stop("No valid data points remaining after removing invalid values")
     }
   } else {
     y_clean <- y
   }
-  
-  # Generate standard Gauss-Hermite quadrature nodes and weights
-  # This gives us nodes and weights for standard normal N(0,1)
-  gh_data <- gaussHermiteData(n_nodes)
-  
+
   # Determine quadrature parameters based on method
   if (method == "data_based") {
     # Use data characteristics for centering and scaling
     mu_quad <- median(y_clean, na.rm = TRUE)
     sigma_quad <- sd(y_clean, na.rm = TRUE)
-    
+
     # Protect against zero variance
     if (sigma_quad <= 0 || is.na(sigma_quad)) {
       warning("Data has zero or invalid variance. Using unit variance for quadrature.")
       sigma_quad <- 1.0
     }
-    
-    # CRITICAL FIX: Limit the integration domain to ±4 standard deviations
-    # This prevents numerical issues where regime densities become negligible
-    # Beyond ±4σ, normal densities drop below 1e-6, causing Fisher Information
-    # calculation failures that bias A parameters toward zero
-    node_range <- 4.0  # Covers 99.99% of probability mass
-    
-    # Transform nodes from standard to limited data-appropriate range
-    # Instead of letting nodes go to ±∞, we constrain them to reasonable values
-    raw_nodes <- gh_data$x  # These are from standard normal
-    node_scale <- node_range / max(abs(raw_nodes))  # Scale factor to limit range
-    
-    # Apply the transformation: center at mu_quad, scale by sigma_quad, but limit range
-    nodes <- mu_quad + sigma_quad * node_scale * raw_nodes
-    weights <- gh_data$w / sqrt(pi)  # Standard Gauss-Hermite normalization
-    
   } else {  # standardized method
-    # Use standardized parameters without range limitation for comparison
     mu_quad <- 0.0
     sigma_quad <- 1.0
-    
-    # Standard transformation for comparison/reference
-    nodes <- sqrt(2) * gh_data$x
-    weights <- gh_data$w / sqrt(pi)
   }
+
+  # Use statmod::gauss.quad.prob for Gauss-Hermite quadrature
+
+  # This matches the original HMMGAS C implementation exactly
+  GQ <- statmod::gauss.quad.prob(n_nodes, "normal", mu = mu_quad, sigma = sigma_quad)
+  nodes <- GQ$nodes
+  weights <- GQ$weights
   
   # Store additional information for diagnostics
   mu <- if (method == "data_based") mu_quad else 0.0
@@ -314,7 +296,20 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #' result$scaled_score  # The score vector
 #' result$fisher_info   # Fisher Information
 calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE,
-                                X_pred, gh_setup, scaling_method = NULL) {
+                                X_pred, gh_setup, scaling_method = NULL,
+                                tot_lik_external = NULL) {
+  # NOTE on X_pred parameter:
+  # For diagonal parameterization, X_pred should be the FILTERED probs from t-1
+  # (used for the g-vector calculation). The tot_lik denominator should use
+
+  # predicted probs (X_tlag), which should be passed via tot_lik_external.
+  #
+  # If tot_lik_external is NULL, this function computes tot_lik = sum(eta * X_pred),
+  # which is INCORRECT for the C code match but kept for backward compatibility.
+  #
+  # To match the original C code exactly:
+  # - Pass X_pred = X_t[, t-1] (filtered probs from t-1) for g-vector
+  # - Pass tot_lik_external = sum(eta * X_tlag) (using predicted probs) for S denominator
 
   # Infer K from the length of mu
   K <- length(mu)
@@ -380,8 +375,17 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
     eta[k] <- dnorm(y_obs, mu[k], sqrt(sigma2[k]))
   }
 
-  # Calculate total likelihood using predicted probabilities
-  tot_lik <- sum(eta * X_pred)
+  # Calculate total likelihood
+  # CRITICAL: Use tot_lik_external if provided (should be sum(eta * X_tlag) from caller)
+  # This is the CORRECT approach to match the C code, where:
+  #   - S denominator uses exp(logLik[t]) = sum(eta * X_tlag)  (predicted probs)
+  #   - g-vector uses X_t[t-1] (filtered probs from previous time)
+  if (!is.null(tot_lik_external)) {
+    tot_lik <- tot_lik_external
+  } else {
+    # Fallback: compute using X_pred (may not match C code if X_pred is filtered probs)
+    tot_lik <- sum(eta * X_pred)
+  }
 
   # Protect against numerical issues
   if (tot_lik <= .Machine$double.eps || !is.finite(tot_lik)) {
@@ -506,6 +510,7 @@ calculate_fisher_information_diagonal <- function(mu, sigma2, X_t_prev, p_diag, 
 
   # Build transition matrix from diagonal probabilities
   # For diagonal parameterization: P[i,i] = p_diag[i], P[i,j] = (1-p_diag[i])/(K-1) for j != i
+  # Note: P is row-stochastic (rows sum to 1), where P[i,j] = P(to j | from i)
   transition_mat <- matrix(0, K, K)
   for (i in 1:K) {
     for (j in 1:K) {
@@ -517,8 +522,10 @@ calculate_fisher_information_diagonal <- function(mu, sigma2, X_t_prev, p_diag, 
     }
   }
 
-  # Calculate predicted probabilities
-  X_pred <- as.vector(transition_mat %*% X_t_prev)
+  # Calculate predicted probabilities: X_pred = P^T %*% X_t_prev
+  # CRITICAL FIX: Must use transpose because P is row-stochastic (P[i,j] = P(to j | from i))
+  # This matches compute_predicted_probs() in transition_helpers.R and the original C code
+  X_pred <- as.vector(t(transition_mat) %*% X_t_prev)
 
   # Numerical integration using Gauss-Hermite quadrature
   # Following the original HMMGAS implementation

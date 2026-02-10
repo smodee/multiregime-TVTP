@@ -65,16 +65,33 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
   
   # Determine the number of transition parameters based on parameterization
   n_transition <- length(init_trans)
-  
-  # Generate representative data for quadrature setup (using expanded parameters)
-  representative_data <- c(rnorm(quad_sample_size, mean(mu), sqrt(mean(sigma2))))
-  
+
   # Setup Gauss-Hermite quadrature for score calculation
-  gh_setup <- setup_gauss_hermite_quadrature(
-    y = representative_data,
+  # Use statmod::gauss.quad.prob to match the original C code exactly
+  if (!requireNamespace("statmod", quietly = TRUE)) {
+    stop("Package 'statmod' is required for GAS model. Please install it.")
+  }
+
+  # Create representative sample from regime parameters (matching original approach)
+  regime_sample <- c(rnorm(quad_sample_size/2, mu[1], sqrt(sigma2[1])),
+                     rnorm(quad_sample_size/2, mu[K], sqrt(sigma2[K])))
+  sample_median <- median(regime_sample)
+  sample_sd <- sd(regime_sample)
+
+  GQ <- statmod::gauss.quad.prob(n_nodes, "normal", mu = sample_median, sigma = sample_sd)
+
+  # Create gh_setup object compatible with calculate_gas_score
+  gh_setup <- list(
+    nodes = GQ$nodes,
+    weights = GQ$weights,
     n_nodes = n_nodes,
-    method = "data_based"
+    mu = sample_median,
+    sigma = sample_sd,
+    mu_quad = sample_median,
+    sigma_quad = sample_sd,
+    method = "statmod_exact"
   )
+  class(gh_setup) <- c("gauss_hermite_setup", "list")
   
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
@@ -310,13 +327,36 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   # Full GAS model implementation
   M <- length(y)
   n_transition <- length(init_trans)
-  
+
   # Setup Gauss-Hermite quadrature for score calculation
-  gh_setup <- setup_gauss_hermite_quadrature(
-    y = y,
+  # CRITICAL: Use statmod::gauss.quad.prob to match the original C code exactly
+  # The C code receives nodes/weights from R via gauss.quad.prob(30, "normal", mu, sigma)
+  # where mu = median(representative_sample), sigma = sd(representative_sample)
+
+  # Create representative sample from regime parameters (matching original approach)
+  regime_sample <- c(rnorm(500, mu[1], sqrt(sigma2[1])),
+                     rnorm(500, mu[K], sqrt(sigma2[K])))
+  sample_median <- median(regime_sample)
+  sample_sd <- sd(regime_sample)
+
+  # Use statmod::gauss.quad.prob for exact match with C code
+  if (!requireNamespace("statmod", quietly = TRUE)) {
+    stop("Package 'statmod' is required for GAS model. Please install it.")
+  }
+  GQ <- statmod::gauss.quad.prob(n_nodes, "normal", mu = sample_median, sigma = sample_sd)
+
+  # Create gh_setup object compatible with calculate_gas_score
+  gh_setup <- list(
+    nodes = GQ$nodes,
+    weights = GQ$weights,
     n_nodes = n_nodes,
-    method = "data_based"
+    mu = sample_median,
+    sigma = sample_sd,
+    mu_quad = sample_median,
+    sigma_quad = sample_sd,
+    method = "statmod_exact"
   )
+  class(gh_setup) <- c("gauss_hermite_setup", "list")
   
   # Initialize variables
   tot_lik <- numeric(M)                # Total likelihood
@@ -378,16 +418,23 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   # For the GAS model, at t=1 we use stationary probabilities for the score calculation
   # (the stationary_probs were already computed above for any K>=2)
 
-  # Calculate GAS score for time t=1 using STATIONARY probs
+  # Calculate GAS score for time t=1 using STATIONARY probs for g-vector
+  # CRITICAL: The C code uses:
+  #   - logLik[0] = log(eta[0]*X_tlag[0]+eta[1]*X_tlag[1]) for S denominator
+  #   - g[0] = p1[0]*p11*(1-p11), g[1] = -p2[0]*p22*(1-p22) for g-vector (uses stationary probs)
+  # So we pass:
+  #   - X_pred = stationary_probs (for g-vector calculation)
+  #   - tot_lik_external = tot_lik[1] (computed using X_tlag, for S denominator)
   score_result_1 <- calculate_gas_score(
     y_obs = y[1],
     mu = mu,
     sigma2 = sigma2,
     trans_prob = p_trans[, 1],
     diag_probs = diag_probs,
-    X_pred = stationary_probs,  # Use STATIONARY probs, not X_tlag!
+    X_pred = stationary_probs,  # Use STATIONARY probs for g-vector
     gh_setup = gh_setup,
-    scaling_method = scaling_method
+    scaling_method = scaling_method,
+    tot_lik_external = tot_lik[1]  # Use tot_lik based on X_tlag for S denominator
   )
 
   score_scaled[, 2] <- score_result_1$scaled_score
@@ -428,8 +475,11 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
     # C code: if((t<(T[0]-1))) { ... }
     if (t < M) {
       # Calculate GAS score for time t
-      # CRITICAL: For t>=2, the g-vector uses FILTERED probs from t-1, not X_tlag!
-      # Original C code (line 170-171):
+      # CRITICAL: The C code uses two different probability sets:
+      #   - S denominator uses exp(logLik[t]) = sum(eta * X_tlag) (predicted probs)
+      #   - g-vector uses X_t[t-1] (filtered probs from t-1)
+      # Original C code (line 169-171):
+      #   S = (eta[t*2]-eta[t*2+1])/exp(logLik[t])   <- Uses logLik based on X_tlag
       #   g[t*2]   = X_t[(t-1)*2]*p11[t]*(1-p11[t])   <- Uses X_t from t-1
       #   g[t*2+1] = -X_t[(t-1)*2+1]*p22[t]*(1-p22[t])
       score_result <- calculate_gas_score(
@@ -438,9 +488,10 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
         sigma2 = sigma2,
         trans_prob = p_trans[, t],
         diag_probs = diag_probs,
-        X_pred = X_t[, t-1],  # Use FILTERED probs from t-1, not X_tlag[, t]!
+        X_pred = X_t[, t-1],  # Use FILTERED probs from t-1 for g-vector
         gh_setup = gh_setup,
-        scaling_method = scaling_method
+        scaling_method = scaling_method,
+        tot_lik_external = tot_lik[t]  # Use tot_lik based on X_tlag for S denominator
       )
 
       # Store score and diagnostics

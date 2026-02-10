@@ -54,8 +54,8 @@ Required R packages:
 # Core dependencies
 install.packages(c("MASS", "optimx", "numDeriv"))
 
-# For GAS model
-install.packages("fastGHQuad")
+# For GAS model (Gauss-Hermite quadrature)
+install.packages("statmod")
 
 # For parallel processing (optional but recommended)
 install.packages(c("future", "future.apply"))
