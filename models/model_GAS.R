@@ -319,11 +319,19 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   )
   
   # Initialize variables
-  eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
   tot_lik <- numeric(M)                # Total likelihood
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
   X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
-  
+
+  # =========================================================================
+  # PRE-COMPUTE EMISSION LIKELIHOODS (vectorized for performance)
+  # =========================================================================
+  eta <- matrix(0, nrow=K, ncol=M)
+  sqrt_sigma2 <- sqrt(sigma2)
+  for (k in 1:K) {
+    eta[k, ] <- dnorm(y, mu[k], sqrt_sigma2[k])
+  }
+
   # Initialize GAS-specific variables
   f <- matrix(0, nrow=n_transition, ncol=M)
   p_trans <- matrix(0, nrow=n_transition, ncol=M)
@@ -351,10 +359,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   # Compute initial predicted probabilities: X_tlag[,1] = P^T * stationary
   X_tlag[, 1] <- compute_initial_predicted_probs(p_trans[, 1], diag_probs = diag_probs)
 
-  # Calculate eta and likelihood for t=1
-  for (k in 1:K) {
-    eta[k, 1] <- dnorm(y[1], mu[k], sqrt(sigma2[k]))
-  }
+  # Note: eta[,1] already computed in vectorized pre-computation above
   tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
 
   # Calculate filtered probabilities X_t[,1]
@@ -407,10 +412,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
     # Generate predicted probabilities using generalized formula
     X_tlag[, t] <- compute_predicted_probs(X_t[, t-1], p_trans[, t], diag_probs = diag_probs)
 
-    # Calculate likelihoods
-    for (k in 1:K) {
-      eta[k, t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
-    }
+    # Note: eta[,t] already computed in vectorized pre-computation above
     tot_lik[t] <- sum(eta[, t] * X_tlag[, t])
 
     # Protect against numerical issues

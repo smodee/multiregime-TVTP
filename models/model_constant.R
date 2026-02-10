@@ -168,11 +168,19 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   transition_mat <- transition_matrix(trans_prob, diag_probs = diag_probs, check_validity = TRUE)
   
   # Initialize variables
-  eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
   tot_lik <- numeric(M)                # Total likelihood
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
   X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
-  
+
+  # =========================================================================
+  # PRE-COMPUTE EMISSION LIKELIHOODS (vectorized for performance)
+  # =========================================================================
+  eta <- matrix(0, nrow=K, ncol=M)
+  sqrt_sigma2 <- sqrt(sigma2)
+  for (k in 1:K) {
+    eta[k, ] <- dnorm(y, mu[k], sqrt_sigma2[k])
+  }
+
   # Initial state probabilities (stationary distribution or uniform)
   start_dist <- tryCatch({
     stat_dist(transition_mat)
@@ -190,11 +198,8 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
     # Generate predicted probabilities using the constant transition matrix
     # Use transpose because P is row-stochastic: P[i,j] = P(to j | from i)
     X_tlag[,t] <- as.vector(t(transition_mat) %*% X_t[,t])
-    
-    # Calculate likelihoods
-    for (k in 1:K) {
-      eta[k,t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
-    }
+
+    # Note: eta[,t] already computed in vectorized pre-computation above
     tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
     
     # Protect against numerical issues
@@ -209,9 +214,7 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
   
   # Calculate likelihood for the last time point
   X_tlag[,M] <- as.vector(t(transition_mat) %*% X_t[,M-1])
-  for (k in 1:K) {
-    eta[k,M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
-  }
+  # Note: eta[,M] already computed in vectorized pre-computation above
   tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
   
   # Protect against numerical issues

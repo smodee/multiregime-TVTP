@@ -196,10 +196,19 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   n_transition <- length(init_trans)
 
   # Initialize variables
-  eta <- matrix(0, nrow=K, ncol=M)     # Likelihood of each regime
   tot_lik <- numeric(M)                # Total likelihood
   X_t <- matrix(0, nrow=K, ncol=M)     # Filtered probabilities after observation
   X_tlag <- matrix(0, nrow=K, ncol=M)  # Predicted probabilities before observation
+
+  # =========================================================================
+  # PRE-COMPUTE EMISSION LIKELIHOODS (vectorized for performance)
+  # =========================================================================
+  # Instead of computing dnorm inside the loop, compute all at once
+  eta <- matrix(0, nrow=K, ncol=M)
+  sqrt_sigma2 <- sqrt(sigma2)  # Pre-compute sqrt once
+  for (k in 1:K) {
+    eta[k, ] <- dnorm(y, mu[k], sqrt_sigma2[k])
+  }
 
   # Get baseline transition probabilities that are logit-transformed
   # omega_LR is the long-run (unconditional) value of f
@@ -222,10 +231,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   # This works for any K>=2 using eigenvalue-based stationary distribution
   X_tlag[, 1] <- compute_initial_predicted_probs(p_trans[, 1], diag_probs = diag_probs)
 
-  # Compute eta (observation likelihoods) for t=1
-  for (k in 1:K) {
-    eta[k, 1] <- dnorm(y[1], mu[k], sqrt(sigma2[k]))
-  }
+  # Note: eta[,1] already computed in vectorized pre-computation above
 
   # Compute total likelihood and filtered probabilities for t=1
   tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
@@ -254,10 +260,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
       # Generate predicted probabilities using generalized formula
       X_tlag[, t] <- compute_predicted_probs(X_t[, t-1], p_trans[, t], diag_probs = diag_probs)
 
-      # Calculate likelihoods
-      for (k in 1:K) {
-        eta[k, t] <- dnorm(y[t], mu[k], sqrt(sigma2[k]))
-      }
+      # Note: eta[,t] already computed in vectorized pre-computation above
       tot_lik[t] <- sum(eta[, t] * X_tlag[, t])
 
       # Compute filtered probabilities
@@ -290,9 +293,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
     # Generate predicted probabilities using generalized formula
     X_tlag[, M] <- compute_predicted_probs(X_t[, M-1], p_trans[, M], diag_probs = diag_probs)
 
-    for (k in 1:K) {
-      eta[k, M] <- dnorm(y[M], mu[k], sqrt(sigma2[k]))
-    }
+    # Note: eta[,M] already computed in vectorized pre-computation above
     tot_lik[M] <- sum(eta[, M] * X_tlag[, M])
 
     if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
