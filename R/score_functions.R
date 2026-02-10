@@ -213,8 +213,8 @@ validate_gauss_hermite_setup <- function(gh_setup) {
   }
   
   # Check method
-  if (!gh_setup$method %in% c("data_based", "standardized")) {
-    stop("Method must be either 'data_based' or 'standardized'")
+  if (!gh_setup$method %in% c("data_based", "standardized", "statmod_exact")) {
+    stop("Method must be 'data_based', 'standardized', or 'statmod_exact'")
   }
   
   return(TRUE)
