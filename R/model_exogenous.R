@@ -62,8 +62,15 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
 
-  # Get baseline transition probabilities that are logit-transformed
-  omega_LR <- logit(init_trans)
+  # Get baseline transition parameters in f-space
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+  }
+  omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
 
   for (i in 1:M) {
@@ -81,7 +88,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
     # Exogenous uses omega + A*X_Exo[1] from the start
     # =========================================================================
     f[, 1] <- omega + A * X_Exo[1]
-    p_trans[, 1] <- logistic(f[, 1])
+    p_trans[, 1] <- f_to_params(f[, 1])
 
     # Compute initial predicted probabilities using stationary distribution
     # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -100,7 +107,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 
     # Set f[,2] using exogenous variable at index 2
     f[, 2] <- omega + A * X_Exo[2]
-    p_trans[, 2] <- logistic(f[, 2])
+    p_trans[, 2] <- f_to_params(f[, 2])
 
     # =========================================================================
     # MAIN LOOP (t=1 to total_length-2): Generalized for K>=2
@@ -127,7 +134,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 
       # Update f for next time step using exogenous variable
       f[, t + 2] <- omega + A * X_Exo[t + 2]
-      p_trans[, t + 2] <- logistic(f[, t + 2])
+      p_trans[, t + 2] <- f_to_params(f[, t + 2])
     }
 
     # Remove burn-in and save the simulation run
@@ -213,8 +220,15 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
     eta[k, ] <- dnorm(y, mu[k], sqrt_sigma2[k])
   }
 
-  # Get baseline transition probabilities that are logit-transformed
-  omega_LR <- logit(init_trans)
+  # Get baseline transition parameters in f-space
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+  }
+  omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
 
   # Initialize f values for transition probabilities
@@ -226,7 +240,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   # Key difference from TVP: Exogenous uses omega + A*X_Exo[1] from the start
   # =========================================================================
   f[, 1] <- omega + A * X_Exo[1]
-  p_trans[, 1] <- logistic(f[, 1])
+  p_trans[, 1] <- f_to_params(f[, 1])
 
   # Compute initial predicted probabilities using stationary distribution
   # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -246,7 +260,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   # Set f[,2] using exogenous variable at t=2
   if (M >= 2) {
     f[, 2] <- omega + A * X_Exo[2]
-    p_trans[, 2] <- logistic(f[, 2])
+    p_trans[, 2] <- f_to_params(f[, 2])
   }
 
   # =========================================================================
@@ -271,7 +285,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
       # Update transition probabilities for next time step using exogenous variable
       if (t < M - 1) {
         f[, t+1] <- omega + A * X_Exo[t+1]
-        p_trans[, t+1] <- logistic(f[, t+1])
+        p_trans[, t+1] <- f_to_params(f[, t+1])
       }
     }
   }
@@ -283,7 +297,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
     # Need to set f[,M] if not already set
     if (M > 2) {
       f[, M] <- omega + A * X_Exo[M]
-      p_trans[, M] <- logistic(f[, M])
+      p_trans[, M] <- f_to_params(f[, M])
     }
 
     # Generate predicted probabilities using generalized formula

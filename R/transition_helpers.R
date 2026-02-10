@@ -114,50 +114,63 @@ transition_matrix_diagonal <- function(diag_probs, check_validity = TRUE) {
   return(t_mat)
 }
 
-#' Create transition matrix from off-diagonal parameterization  
+#' Create transition matrix from off-diagonal softmax parameterization
 #'
-#' @param off_diag_probs Vector of off-diagonal transition probabilities
+#' @param off_diag_params Vector of K*(K-1) unconstrained softmax parameters
+#'   in row-major order
 #' @param check_validity Logical; whether to validate the resulting matrix
-#' @return K x K transition matrix
+#' @return K x K transition matrix with rows summing to 1
 #' @details
-#' Creates a transition matrix from K*(K-1) off-diagonal elements specified
-#' in row-major order. Diagonal elements are calculated as p_ii = 1 - sum(p_ij for j≠i).
-#' 
-#' This is the default parameterization for the new implementation.
-transition_matrix_offdiagonal <- function(off_diag_probs, check_validity = TRUE) {
-  
-  n <- length(off_diag_probs)
-  
+#' Creates a transition matrix from K*(K-1) unconstrained real parameters using
+#' softmax normalization with reference category 0 for diagonal entries.
+#'
+#' For each row i, given K-1 parameters x_1, ..., x_{K-1}:
+#' \itemize{
+#'   \item p_ij = exp(x_j) / (1 + sum(exp(x_k))) for off-diagonal entries
+#'   \item p_ii = 1 / (1 + sum(exp(x_k))) for the diagonal entry
+#' }
+#'
+#' All probabilities are guaranteed positive and rows sum to 1 by construction.
+transition_matrix_offdiagonal <- function(off_diag_params, check_validity = TRUE) {
+
+  n <- length(off_diag_params)
+
   # Determine matrix size: K*(K-1) = n, so K^2 - K - n = 0
   K <- (1 + sqrt(1 + 4*n)) / 2
-  
+
   if (abs(K - round(K)) > 1e-10) {
-    stop(sprintf("Invalid length %d for off-diagonal probabilities. Expected K*(K-1) for some integer K >= 2.", n))
+    stop(sprintf("Invalid length %d for off-diagonal parameters. Expected K*(K-1) for some integer K >= 2.", n))
   }
-  
+
   K <- round(K)
-  
+
   # Initialize transition matrix
   t_mat <- matrix(0, nrow = K, ncol = K)
-  
-  # Fill off-diagonal elements row by row
+
+  # Apply softmax per row
   idx <- 1
   for (i in 1:K) {
+    # Extract K-1 unconstrained parameters for row i
+    row_params <- off_diag_params[idx:(idx + K - 2)]
+    result <- softmax_row(row_params)
+
+    # Fill off-diagonal entries
+    off_idx <- 1
     for (j in 1:K) {
       if (i != j) {
-        t_mat[i, j] <- off_diag_probs[idx]
-        idx <- idx + 1
+        t_mat[i, j] <- result$offdiag[off_idx]
+        off_idx <- off_idx + 1
       }
     }
-    
-    # Calculate diagonal element to make row sum to 1
-    t_mat[i, i] <- 1 - sum(t_mat[i, -i])
+    t_mat[i, i] <- result$diag
+
+    idx <- idx + K - 1
   }
-  
+
   if (check_validity) {
     validate_transition_matrix(t_mat)
   }
-  
+
   return(t_mat)
 }
 
@@ -190,30 +203,32 @@ convert_parameterization <- function(probs, from_diag = TRUE) {
   }
   
   if (from_diag) {
-    # Convert FROM diagonal TO off-diagonal
+    # Convert FROM diagonal TO off-diagonal (softmax parameters)
     K <- length(probs)
-    
+
     if (K < 2) {
       stop("Need at least 2 diagonal probabilities")
     }
-    
+
     # Create transition matrix from diagonal parameterization
     t_mat <- transition_matrix_diagonal(probs, check_validity = FALSE)
-    
-    # Extract off-diagonal elements in row-major order
-    off_diag_probs <- numeric(K * (K - 1))
+
+    # Compute inverse softmax: x_ij = log(p_ij / p_ii) for each row
+    off_diag_params <- numeric(K * (K - 1))
     idx <- 1
-    
+
     for (i in 1:K) {
+      p_ii <- max(t_mat[i, i], .Machine$double.eps)
       for (j in 1:K) {
         if (i != j) {
-          off_diag_probs[idx] <- t_mat[i, j]
+          p_ij <- max(t_mat[i, j], .Machine$double.eps)
+          off_diag_params[idx] <- log(p_ij / p_ii)
           idx <- idx + 1
         }
       }
     }
-    
-    return(off_diag_probs)
+
+    return(off_diag_params)
     
   } else {
     # Convert FROM off-diagonal TO diagonal
@@ -311,37 +326,10 @@ convert_to_valid_probs <- function(probs, diag_probs = TRUE, max_constraint = 0.
     return(probs)
     
   } else {
-    # For off-diagonal parameterization: ensure row sums don't exceed max_constraint
-    n <- length(probs)
-    K <- (1 + sqrt(1 + 4*n)) / 2
-    
-    if (abs(K - round(K)) > 1e-10) {
-      stop("Invalid length for off-diagonal probabilities")
-    }
-    
-    K <- round(K)
-    valid_probs <- numeric(length(probs))
-    idx <- 1
-    
-    for (i in 1:K) {
-      # Extract off-diagonal probabilities for this row
-      row_indices <- idx:(idx + K - 2)
-      row_probs <- probs[row_indices]
-      
-      # Ensure individual probabilities are in valid range
-      row_probs <- pmax(0.001, pmin(0.99, row_probs))
-      
-      # If row sum exceeds max_constraint, scale proportionally
-      row_sum <- sum(row_probs)
-      if (row_sum > max_constraint) {
-        scale_factor <- max_constraint / row_sum
-        row_probs <- row_probs * scale_factor
-      }
-      
-      valid_probs[row_indices] <- row_probs
-      idx <- idx + K - 1
-    }
-    
+    # For off-diagonal softmax parameterization: parameters are unconstrained reals.
+    # Softmax always produces valid probabilities, so only sanitize NA/Inf.
+    valid_probs <- probs
+    valid_probs[is.na(valid_probs) | is.infinite(valid_probs)] <- 0
     return(valid_probs)
   }
 }

@@ -2,24 +2,31 @@
 % Please edit documentation in R/transition_helpers.R
 \name{transition_matrix_offdiagonal}
 \alias{transition_matrix_offdiagonal}
-\title{Create transition matrix from off-diagonal parameterization}
+\title{Create transition matrix from off-diagonal softmax parameterization}
 \usage{
-transition_matrix_offdiagonal(off_diag_probs, check_validity = TRUE)
+transition_matrix_offdiagonal(off_diag_params, check_validity = TRUE)
 }
 \arguments{
-\item{off_diag_probs}{Vector of off-diagonal transition probabilities}
+\item{off_diag_params}{Vector of K*(K-1) unconstrained softmax parameters
+in row-major order}
 
 \item{check_validity}{Logical; whether to validate the resulting matrix}
 }
 \value{
-K x K transition matrix
+K x K transition matrix with rows summing to 1
 }
 \description{
-Create transition matrix from off-diagonal parameterization
+Create transition matrix from off-diagonal softmax parameterization
 }
 \details{
-Creates a transition matrix from K*(K-1) off-diagonal elements specified
-in row-major order. Diagonal elements are calculated as p_ii = 1 - sum(p_ij for j≠i).
+Creates a transition matrix from K*(K-1) unconstrained real parameters using
+softmax normalization with reference category 0 for diagonal entries.
 
-This is the default parameterization for the new implementation.
+For each row i, given K-1 parameters x_1, ..., x_{K-1}:
+\itemize{
+\item p_ij = exp(x_j) / (1 + sum(exp(x_k))) for off-diagonal entries
+\item p_ii = 1 / (1 + sum(exp(x_k))) for the diagonal entry
+}
+
+All probabilities are guaranteed positive and rows sum to 1 by construction.
 }

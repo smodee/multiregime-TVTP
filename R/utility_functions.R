@@ -71,6 +71,45 @@ logistic_clamped <- function(x, eps = 1e-10) {
   return(eps + (1 - 2*eps) / (1 + exp(-x)))
 }
 
+#' Softmax row transformation with reference category
+#'
+#' Converts K-1 unconstrained real parameters into a full row of K probabilities
+#' using softmax normalization with the diagonal entry fixed at reference value 0.
+#'
+#' @param x Numeric vector of length K-1 (unconstrained softmax parameters for
+#'   off-diagonal entries of one row)
+#' @return A list with components:
+#'   \describe{
+#'     \item{offdiag}{Numeric vector of K-1 off-diagonal probabilities}
+#'     \item{diag}{Scalar diagonal probability}
+#'   }
+#' @details
+#' For K-1 unconstrained parameters x_1, ..., x_{K-1} and a fixed reference of 0
+#' for the diagonal entry:
+#' \itemize{
+#'   \item p_j = exp(x_j) / (1 + sum(exp(x_k))) for off-diagonal entries
+#'   \item p_diag = 1 / (1 + sum(exp(x_k))) for the diagonal entry
+#' }
+#'
+#' All probabilities are guaranteed positive and sum to 1. Uses the max-subtraction
+#' trick for numerical stability with large parameter values.
+#'
+#' @examples
+#' \dontrun{
+#' # Equal probabilities for K=3: all params = 0
+#' softmax_row(c(0, 0))  # offdiag = c(1/3, 1/3), diag = 1/3
+#'
+#' # High persistence: negative off-diagonal params
+#' softmax_row(c(-3, -3))  # Small off-diag, large diagonal
+#' }
+softmax_row <- function(x) {
+  max_x <- max(c(x, 0))
+  exp_x <- exp(x - max_x)
+  exp_ref <- exp(-max_x)
+  denom <- exp_ref + sum(exp_x)
+  list(offdiag = exp_x / denom, diag = exp_ref / denom)
+}
+
 #' Safe logarithm to handle zeros and negative values
 #'
 #' @param x Value to take the logarithm of
@@ -394,17 +433,9 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       trans_prob_start <- runif(K, 0.5, 0.95)
       
     } else {
-      # Generate off-diagonal transition probabilities
-      # Start with base probability around 1/(K+1), add noise
-      base_prob <- 1.0 / (K + 1)
-      noise_range <- 0.1  # ±10% variation
-      
-      # Generate raw probabilities with noise
-      raw_trans_probs <- pmax(0.01, pmin(0.8, 
-                                         base_prob + runif(n_transition, -noise_range, noise_range)))
-      
-      # Ensure they form a valid stochastic matrix using new helper
-      trans_prob_start <- convert_to_valid_probs(raw_trans_probs, diag_probs = FALSE)
+      # Generate unconstrained softmax parameters for off-diagonal transitions
+      # x=0 gives equal probs (1/K for all entries); small perturbations give variation
+      trans_prob_start <- rnorm(n_transition, mean = 0, sd = 0.3)
     }
     
     # 4. Build parameter vector based on model type
@@ -469,8 +500,7 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       if (diag_probs) {
         trans_prob_fallback <- rep(0.8, K)  # High persistence
       } else {
-        trans_prob_fallback <- rep(0.2, n_transition)
-        trans_prob_fallback <- convert_to_valid_probs(trans_prob_fallback, diag_probs = FALSE)
+        trans_prob_fallback <- rep(0, n_transition)  # Equal probs (softmax params)
       }
       
       if (model_type == "constant") {

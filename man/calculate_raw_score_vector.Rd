@@ -13,7 +13,8 @@ calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
 
 \item{X_t_prev}{Filtered probabilities from previous time step (length K)}
 
-\item{p_trans}{Current transition probabilities (length K*(K-1))}
+\item{p_trans}{Current transition parameters (length K*(K-1)). These are
+unconstrained softmax parameters when using off-diagonal parameterization.}
 
 \item{K}{Number of regimes}
 }
@@ -24,13 +25,14 @@ Raw score vector (length K*(K-1))
 Calculate raw score vector for GAS model
 }
 \details{
-Implements equation (13) from Bazzi et al. (2017) for K regimes:
-r_t = (p(y_t|θ_i) - p(y_t|θ_j)) / p(y_t|θ) * g(f_t, θ, I_{t-1})
+Implements the GAS score for K regimes using softmax parameterization.
 
-The raw score measures how much the observation at time t favors one regime
-over another, weighted by the impact on transition probabilities.
+For off-diagonal softmax parameters x_ij, the score is derived via the chain
+rule through the softmax Jacobian:
+\deqn{d \log L / d x_{ij} = X_{t-1,i} \cdot P_{ij} \cdot (\eta_j - \text{row\_lik}_i) / \text{tot\_lik}}
+where \eqn{\text{row\_lik}_i = \sum_m \eta_m \cdot P_{im}}.
 
-For a K-regime model, we have K*(K-1) transition probabilities (off-diagonal
+For a K-regime model, we have K*(K-1) softmax parameters (off-diagonal
 elements of the transition matrix), so the score vector has K*(K-1) elements.
 }
 \examples{
@@ -40,7 +42,7 @@ K <- 3
 eta <- c(0.1, 0.8, 0.1)  # Regime likelihoods
 tot_lik <- sum(eta * c(0.3, 0.4, 0.3))  # Total likelihood
 X_t_prev <- c(0.3, 0.4, 0.3)  # Previous filtered probabilities
-p_trans <- rep(0.2, 6)  # Transition probabilities
+p_trans <- rep(0, 6)  # Softmax parameters (0 = equal probs)
 
 raw_score <- calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
 }
