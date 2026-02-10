@@ -1,0 +1,12 @@
+^\.RData$
+^\.Rhistory$
+^\.claude
+^results
+^legacy
+^nul$
+^\.gitattributes$
+^.*\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^models$
+^helpers$

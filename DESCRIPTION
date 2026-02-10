@@ -1,0 +1,26 @@
+Package: multiregimeTVTP
+Title: Multi-Regime Time-Varying Transition Probability Models
+Version: 0.1.0
+Authors@R:
+    person("Samuel", "Modée", role = c("aut", "cre"),
+           email = "samuelmodee@gmail.com")
+Description: Implements regime-switching models with time-varying transition
+    probabilities. Supports constant, autoregressive (TVP), exogenous
+    variable-driven, and score-driven (GAS) transition dynamics following
+    Bazzi et al. (2017). Handles arbitrary K-regime models with both
+    diagonal and off-diagonal transition probability parameterizations.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+ByteCompile: yes
+Imports:
+    statmod,
+    future,
+    future.apply
+Suggests:
+    parallel,
+    testthat (>= 3.0.0),
+    ggplot2,
+    reshape2
+Config/testthat/edition: 3
