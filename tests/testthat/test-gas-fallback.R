@@ -1775,9 +1775,10 @@ describe("Verbose output coverage", {
     gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
                                         diag_probs = TRUE, equal_variances = FALSE)
 
+    # Assign result inside capture.output to prevent R auto-printing the return value
     output <- capture.output(
-      Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
-                     use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
+      res <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                            use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
     )
 
     expect_true(any(grepl("constant model fallback", output, ignore.case = TRUE)),
@@ -1790,29 +1791,28 @@ describe("Verbose output coverage", {
                                         diag_probs = TRUE, equal_variances = FALSE)
 
     output <- capture.output(
-      Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
-                     use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
+      res <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                            use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
     )
 
     expect_true(any(grepl("full GAS model", output, ignore.case = TRUE)),
                 label = "Verbose output should mention 'full GAS model'")
   })
 
-  it("verbose=FALSE produces no fallback-related output", {
+  it("verbose=FALSE produces no output", {
     gas_par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 1e-8, 1e-8, 0.85, 0.90)
     gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
                                         diag_probs = TRUE, equal_variances = FALSE)
 
-    # Capture all output and verify no fallback/GAS-related messages
+    # Assign result to prevent R auto-printing the return value
     output <- capture.output(
       suppressWarnings(
-        Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
-                       use_fallback = TRUE, verbose = FALSE, diagnostics = FALSE)
+        res <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, verbose = FALSE, diagnostics = FALSE)
       )
     )
 
-    # No fallback-related output should appear
-    expect_false(any(grepl("constant model fallback|full GAS model|Using", output, ignore.case = TRUE)),
-                 label = "verbose=FALSE should not produce fallback-related output")
+    expect_equal(length(output), 0,
+                 label = "verbose=FALSE should produce no output")
   })
 })
