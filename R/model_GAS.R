@@ -392,8 +392,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
 
   # Calculate filtered probabilities X_t[,1]
-  X_t[1, 1] <- eta[1, 1] * X_tlag[1, 1] / tot_lik[1]
-  X_t[2, 1] <- eta[2, 1] * X_tlag[2, 1] / tot_lik[1]
+  X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik[1]
 
   # Initialize score as zero
   score_scaled[, 1] <- 0
