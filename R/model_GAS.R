@@ -139,7 +139,13 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       
       # Calculate filtered probabilities
       X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
-      
+      # Warn if drift is pathological, then re-normalize
+      if (abs(sum(X_t[,t+1]) - 1) > 1e-4) {
+        warning(sprintf("Filtered probabilities at t=%d sum to %.6f, re-normalizing", t+1, sum(X_t[,t+1])))
+      }
+      X_t[,t+1] <- pmax(X_t[,t+1], .Machine$double.eps)
+      X_t[,t+1] <- X_t[,t+1] / sum(X_t[,t+1])
+
       # Calculate GAS score for time t
       score_result <- calculate_gas_score(
         y_obs = y.sim[t],
@@ -393,6 +399,12 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 
   # Calculate filtered probabilities X_t[,1]
   X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik[1]
+  # Warn if drift is pathological, then re-normalize
+  if (abs(sum(X_t[, 1]) - 1) > 1e-4) {
+    warning(sprintf("Filtered probabilities at t=1 sum to %.6f, re-normalizing", sum(X_t[, 1])))
+  }
+  X_t[, 1] <- pmax(X_t[, 1], .Machine$double.eps)
+  X_t[, 1] <- X_t[, 1] / sum(X_t[, 1])
 
   # Initialize score as zero
   score_scaled[, 1] <- 0
@@ -457,6 +469,12 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
     } else {
       # Calculate filtered probabilities
       X_t[, t] <- (eta[, t] * X_tlag[, t]) / tot_lik[t]
+      # Warn if drift is pathological, then re-normalize
+      if (abs(sum(X_t[, t]) - 1) > 1e-4) {
+        warning(sprintf("Filtered probabilities at t=%d sum to %.6f, re-normalizing", t, sum(X_t[, t])))
+      }
+      X_t[, t] <- pmax(X_t[, t], .Machine$double.eps)
+      X_t[, t] <- X_t[, t] / sum(X_t[, t])
     }
 
     # Only compute score and update f/p_trans if NOT the last time point

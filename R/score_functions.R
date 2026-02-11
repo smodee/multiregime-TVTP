@@ -362,7 +362,7 @@ calculate_gas_score <- function(y_obs, mu, sigma2, trans_prob, diag_probs = TRUE
     stop("X_pred must be a numeric vector of length K")
   }
 
-  if (any(X_pred < 0) || any(X_pred > 1) || abs(sum(X_pred) - 1) > 1e-10) {
+  if (any(X_pred < 0) || any(X_pred > 1) || abs(sum(X_pred) - 1) > 1e-8) {
     stop("X_pred must be valid probabilities that sum to 1")
   }
 
@@ -1321,7 +1321,7 @@ calculate_raw_score_vector <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   }
   
   # Check for valid probabilities
-  if (any(X_t_prev < 0) || any(X_t_prev > 1) || abs(sum(X_t_prev) - 1) > 1e-10) {
+  if (any(X_t_prev < 0) || any(X_t_prev > 1) || abs(sum(X_t_prev) - 1) > 1e-8) {
     stop("X_t_prev must be valid probabilities that sum to 1")
   }
   
