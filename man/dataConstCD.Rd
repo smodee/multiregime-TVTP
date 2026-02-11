@@ -37,13 +37,13 @@ remain constant over time.
 \examples{
 # Generate data using diagonal parameterization (original style)
 par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)  # mu1, mu2, sig1, sig2, p11, p22
-par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant", 
+par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant",
                                      diag_probs=TRUE, equal_variances=FALSE)
-data_sim <- dataConstCD(10, 1000, par_diag)
+data_sim <- dataConstCD(3, 200, par_diag)
 
 # Generate data using off-diagonal parameterization (new style)
 par_offdiag <- c(-1, 1, 0.5, 0.5, 0.2, 0.1)  # mu1, mu2, sig1, sig2, p12, p21
 par_offdiag <- set_parameter_attributes(par_offdiag, K=2, model_type="constant",
                                         diag_probs=FALSE, equal_variances=FALSE)
-data_sim <- dataConstCD(10, 1000, par_offdiag)
+data_sim <- dataConstCD(3, 200, par_offdiag)
 }

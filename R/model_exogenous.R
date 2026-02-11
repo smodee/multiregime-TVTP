@@ -25,10 +25,10 @@
 #' @examples
 #' # Generate data using diagonal parameterization
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2)  # mu, sigma2, p11, p22, A1, A2
-#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="exogenous", 
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="exogenous",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' X_Exo <- rnorm(1200)
-#' data_sim <- dataTVPXExoCD(10, 1000, par_diag, X_Exo)
+#' X_Exo <- rnorm(400)
+#' data_sim <- dataTVPXExoCD(3, 200, par_diag, X_Exo)
 #' @export
 dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 
@@ -168,9 +168,9 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2)
 #' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="exogenous",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' X_Exo <- rnorm(1000)
-#' y <- rnorm(1000)
-#' loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 100, 50)
+#' X_Exo <- rnorm(200)
+#' y <- rnorm(200)
+#' loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 20, 10)
 #' @export
 Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 
@@ -369,13 +369,17 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
+#' \donttest{
 #' # Estimate model with diagonal probabilities
-#' y <- rnorm(1000)
-#' X_Exo <- rnorm(1000)
-#' result_diag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=TRUE, n_starts=5)
-#' 
+#' y <- rnorm(200)
+#' X_Exo <- rnorm(200)
+#' result_diag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=TRUE, n_starts=3,
+#'                                   B=20, C=10)
+#'
 #' # Estimate model with off-diagonal probabilities
-#' result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=5)
+#' result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=3,
+#'                                      B=20, C=10)
+#' }
 #' @export
 estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,

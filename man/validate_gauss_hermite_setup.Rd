@@ -21,7 +21,7 @@ and that they are valid for use in score calculations.
 }
 \examples{
 \dontrun{
-y <- rnorm(1000)
+y <- rnorm(200)
 gh_setup <- setup_gauss_hermite_quadrature(y)
 validate_gauss_hermite_setup(gh_setup)  # Returns TRUE
 }

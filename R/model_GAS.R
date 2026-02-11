@@ -31,9 +31,9 @@
 #' @examples
 #' # Generate data using diagonal parameterization
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)  # mu, sigma2, p11, p22, A, B
-#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas", 
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' data_sim <- dataGASCD(10, 1000, par_diag)
+#' data_sim <- dataGASCD(3, 200, par_diag)
 #' @export
 dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
                       scaling_method = NULL, quad_sample_size = 1000) {
@@ -250,8 +250,8 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)
 #' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' y <- rnorm(1000)
-#' loglik <- Rfiltering_GAS(par_diag, y, 100, 50)
+#' y <- rnorm(200)
+#' loglik <- Rfiltering_GAS(par_diag, y, 20, 10)
 #' @export
 Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = NULL,
                            use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
@@ -595,12 +595,16 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 #' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
+#' \donttest{
 #' # Estimate model with diagonal probabilities
-#' y <- rnorm(1000)
-#' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=5)
-#' 
+#' y <- rnorm(200)
+#' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=3,
+#'                                   B_burnin=20, C=10)
+#'
 #' # Estimate model with off-diagonal probabilities
-#' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
+#' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=3,
+#'                                      B_burnin=20, C=10)
+#' }
 #' @export
 estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,

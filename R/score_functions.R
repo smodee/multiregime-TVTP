@@ -33,12 +33,12 @@
 #'
 #' @examples
 #' # Setup quadrature based on data characteristics
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
-#' 
+#'
 #' # Setup with more nodes for higher precision
 #' gh_setup <- setup_gauss_hermite_quadrature(y, n_nodes = 50)
-#' 
+#'
 #' # Use standardized approach
 #' gh_setup <- setup_gauss_hermite_quadrature(y, method = "standardized")
 #' @export
@@ -130,11 +130,9 @@ setup_gauss_hermite_quadrature <- function(y, n_nodes = 30, method = "data_based
 #' integration parameters, and data characteristics.
 #'
 #' @examples
-#' \dontrun{
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' print(gh_setup)
-#' }
 #' @export
 print.gauss_hermite_setup <- function(x, ...) {
   cat("Gauss-Hermite Quadrature Setup\n")
@@ -164,7 +162,7 @@ print.gauss_hermite_setup <- function(x, ...) {
 #'
 #' @examples
 #' \dontrun{
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' validate_gauss_hermite_setup(gh_setup)  # Returns TRUE
 #' }
@@ -278,7 +276,7 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #'
 #' @examples
 #' # Setup for a 2-regime model with diagonal parameterization
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #'
 #' # Model parameters (diagonal parameterization)

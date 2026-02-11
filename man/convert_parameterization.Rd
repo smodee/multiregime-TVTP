@@ -25,13 +25,10 @@ Note: Converting from off-diagonal to diagonal may lose information if the
 original off-diagonal probabilities were not equal within rows.
 }
 \examples{
-\dontrun{
 # Convert diagonal to off-diagonal
 diag_params <- c(0.8, 0.9)  # p11=0.8, p22=0.9
 off_diag_params <- convert_parameterization(diag_params, from_diag = TRUE)
-# Result: \[0.2, 0.1\] representing p12=0.2, p21=0.1
 
 # Convert back (should recover original structure, not exact values)
 recovered_diag <- convert_parameterization(off_diag_params, from_diag = FALSE)
-}
 }

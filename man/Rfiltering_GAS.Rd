@@ -61,6 +61,6 @@ as attributes (expensive during optimization, useful for final results).
 par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)
 par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
                                      diag_probs=TRUE, equal_variances=FALSE)
-y <- rnorm(1000)
-loglik <- Rfiltering_GAS(par_diag, y, 100, 50)
+y <- rnorm(200)
+loglik <- Rfiltering_GAS(par_diag, y, 20, 10)
 }

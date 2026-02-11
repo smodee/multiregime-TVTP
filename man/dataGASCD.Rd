@@ -55,7 +55,7 @@ with Gauss-Hermite quadrature and Moore-Penrose pseudo-inverse scaling.
 \examples{
 # Generate data using diagonal parameterization
 par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)  # mu, sigma2, p11, p22, A, B
-par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas", 
+par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
                                      diag_probs=TRUE, equal_variances=FALSE)
-data_sim <- dataGASCD(10, 1000, par_diag)
+data_sim <- dataGASCD(3, 200, par_diag)
 }

@@ -339,13 +339,13 @@ format_time <- function(seconds) {
 #' @export
 #' @examples
 #' # Generate starting points for diagonal parameterization (original style)
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' starts_diag <- generate_starting_points(y, K=2, model_type="constant",
-#'                                          n_starts=5, diag_probs=TRUE)
+#'                                          n_starts=3, diag_probs=TRUE)
 #'
 #' # Generate starting points for off-diagonal parameterization (new style)
 #' starts_offdiag <- generate_starting_points(y, K=3, model_type="tvp",
-#'                                             n_starts=5, diag_probs=FALSE)
+#'                                             n_starts=3, diag_probs=FALSE)
 generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "exogenous", "gas"), 
                                      n_starts, diag_probs = TRUE, equal_variances = FALSE, 
                                      seed = NULL) {
