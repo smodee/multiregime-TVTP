@@ -188,38 +188,36 @@ Rfiltering_Const <- function(par, y, B, C, diagnostics = FALSE) {
     warning("Could not calculate stationary distribution, using uniform")
     rep(1/K, K)
   })
-  X_t[,1] <- start_dist
 
-  # Initialize X_tlag[,1] using stationary distribution and transition matrix
+  # Initialize X_tlag[,1] from stationary distribution (matches GAS/TVP convention)
   # For row-stochastic P, prediction is: X_pred = P^T %*% X_prev
   X_tlag[,1] <- as.vector(transition_mat_T %*% start_dist)
 
-  for (t in 1:(M-1)) {
+  # Filter t=1: incorporate first observation into X_t[,1]
+  tot_lik[1] <- sum(eta[,1] * X_tlag[,1])
+  if (tot_lik[1] <= 0 || is.na(tot_lik[1])) {
+    tot_lik[1] <- .Machine$double.eps
+    X_t[,1] <- rep(1/K, K)
+  } else {
+    X_t[,1] <- (eta[,1] * X_tlag[,1]) / tot_lik[1]
+  }
+
+  # Main loop: t=2 to M (matches GAS/TVP/exogenous convention)
+  for (t in 2:M) {
     # Generate predicted probabilities using the constant transition matrix
-    # Use pre-computed transpose for efficiency
-    X_tlag[,t] <- as.vector(transition_mat_T %*% X_t[,t])
+    X_tlag[,t] <- as.vector(transition_mat_T %*% X_t[,t-1])
 
     # Note: eta[,t] already computed in vectorized pre-computation above
-    tot_lik[t] <- sum(eta[,t]*X_tlag[,t])
-    
+    tot_lik[t] <- sum(eta[,t] * X_tlag[,t])
+
     # Protect against numerical issues
     if (tot_lik[t] <= 0 || is.na(tot_lik[t])) {
       tot_lik[t] <- .Machine$double.eps
-      X_t[,t+1] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
+      X_t[,t] <- rep(1/K, K)  # Reset to uniform when we get an invalid likelihood
     } else {
       # Calculate filtered probabilities
-      X_t[,t+1] <- (eta[,t]*X_tlag[,t])/tot_lik[t]
+      X_t[,t] <- (eta[,t] * X_tlag[,t]) / tot_lik[t]
     }
-  }
-  
-  # Calculate likelihood for the last time point
-  X_tlag[,M] <- as.vector(transition_mat_T %*% X_t[,M-1])
-  # Note: eta[,M] already computed in vectorized pre-computation above
-  tot_lik[M] <- sum(eta[,M]*X_tlag[,M])
-  
-  # Protect against numerical issues
-  if (tot_lik[M] <= 0 || is.na(tot_lik[M])) {
-    tot_lik[M] <- .Machine$double.eps
   }
   
   # Sum log-likelihoods, but exclude burn-in and cut-off
