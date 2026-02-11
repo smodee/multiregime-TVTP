@@ -37,13 +37,13 @@ f[t+1] = omega + A * y[t], followed by logistic transformation.
 \examples{
 # Generate data using diagonal parameterization (original style)
 par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9, 0.1, 0.1)  # mu, sigma2, p11, p22, A1, A2
-par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp", 
+par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp",
                                      diag_probs=TRUE, equal_variances=FALSE)
-data_sim <- dataTVPCD(10, 1000, par_diag)
+data_sim <- dataTVPCD(3, 200, par_diag)
 
 # Generate data using off-diagonal parameterization (new style)
 par_offdiag <- c(-1, 1, 0.5, 0.5, 0.2, 0.1, 0.1, 0.1)  # mu, sigma2, p12, p21, A12, A21
 par_offdiag <- set_parameter_attributes(par_offdiag, K=2, model_type="tvp",
                                         diag_probs=FALSE, equal_variances=FALSE)
-data_sim <- dataTVPCD(10, 1000, par_offdiag)
+data_sim <- dataTVPCD(3, 200, par_offdiag)
 }

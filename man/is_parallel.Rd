@@ -21,10 +21,6 @@ Helper function to check if any parallel processing will occur.
 \examples{
 \dontrun{
 allocation <- get_parallel_allocation(1, 10, 3)
-if (is_parallel(allocation)) {
-  # Some form of parallelization enabled
-} else {
-  # Fully sequential execution
-}
+is_parallel(allocation)
 }
 }

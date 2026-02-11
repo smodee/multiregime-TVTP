@@ -31,9 +31,9 @@
 #' @examples
 #' # Generate data using diagonal parameterization
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)  # mu, sigma2, p11, p22, A, B
-#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas", 
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' data_sim <- dataGASCD(10, 1000, par_diag)
+#' data_sim <- dataGASCD(3, 200, par_diag)
 #' @export
 dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
                       scaling_method = NULL, quad_sample_size = 1000) {
@@ -87,9 +87,18 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
   
-  # Get baseline transition probabilities for omega calculation
-  omega <- logit(init_trans)
-  
+  # Get baseline transition parameters in f-space
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+    f_to_params_loop <- logistic_clamped
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+    f_to_params_loop <- identity
+  }
+  omega <- params_to_f(init_trans)
+
   for (i in 1:M) {
     # Initialize all data structures including burn-in period
     total_length <- N + burn_in
@@ -114,7 +123,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     f[,1] <- omega
     # Use clamped logistic to match original HMMGAS C implementation
     # This maps f directly to [1e-10, 1-1e-10] for numerical stability
-    p_trans[,1] <- logistic_clamped(f[,1])
+    p_trans[,1] <- f_to_params_loop(f[,1])
     
     # Initialize score as zero
     score_scaled[,1] <- 0
@@ -171,9 +180,8 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       # Update f values using GAS dynamics: f[t+1] = omega + A*s[t] + B*(f[t] - omega)
       f[,t+1] <- omega + A * score_scaled[,t+1] + B * (f[,t] - omega)
       
-      # Convert f to transition probabilities using clamped logistic
-      # Matches original HMMGAS: p = 1e-10 + (1-2*1e-10)/(1+exp(-f))
-      p_trans[,t+1] <- logistic_clamped(f[,t+1])
+      # Convert f to transition parameters
+      p_trans[,t+1] <- f_to_params_loop(f[,t+1])
     }
 
     # For the last time point - use generalized formula
@@ -248,8 +256,8 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9)
 #' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="gas",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' y <- rnorm(1000)
-#' loglik <- Rfiltering_GAS(par_diag, y, 100, 50)
+#' y <- rnorm(200)
+#' loglik <- Rfiltering_GAS(par_diag, y, 20, 10)
 #' @export
 Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = NULL,
                            use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
@@ -306,7 +314,8 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
         attr(result, "max_A") <- max_A
         attr(result, "A_threshold") <- A_threshold
         attr(result, "score_scaled") <- matrix(0, nrow = length(A), ncol = length(y))
-        attr(result, "f") <- matrix(logit(init_trans), nrow = length(A), ncol = length(y))
+        f_init <- if (diag_probs) logit(init_trans) else init_trans
+        attr(result, "f") <- matrix(f_init, nrow = length(A), ncol = length(y))
         attr(result, "gas_diagnostics") <- list(
           model_type = "constant_fallback",
           max_A = max_A,
@@ -376,9 +385,18 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   fisher_info_series <- numeric(M)
   score_norms <- numeric(M)
   
-  # Get baseline transition probabilities for omega calculation
+  # Get baseline transition parameters in f-space
   # NOTE: For GAS model, omega = omega_LR (no (1-A) factor like TVP/Exogenous)
-  omega <- logit(init_trans)
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+    f_to_params_loop <- logistic_clamped
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+    f_to_params_loop <- identity
+  }
+  omega <- params_to_f(init_trans)
   omega_LR <- omega  # They are the same for GAS
 
   # =============================================================================
@@ -387,8 +405,8 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   # Set f[,1] = omega_LR
   f[, 1] <- omega_LR
 
-  # Compute transition probabilities at t=1 (no clamping for initial value)
-  p_trans[, 1] <- logistic(f[, 1])
+  # Compute transition probabilities at t=1
+  p_trans[, 1] <- f_to_params(f[, 1])
 
   # Compute stationary distribution using eigenvalue method (works for any K>=2)
   stationary_probs <- stat_dist(p_trans[, 1], diag_probs = diag_probs)
@@ -451,7 +469,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   if (M >= 2) {
     f[, 2] <- omega + A * score_scaled[, 2] + B * (f[, 1] - omega)
     # Use clamped logistic for p_trans[,2] to match C code (lines 125-126)
-    p_trans[, 2] <- logistic_clamped(f[, 2])
+    p_trans[, 2] <- f_to_params_loop(f[, 2])
   }
 
   # =============================================================================
@@ -516,7 +534,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
       f[, t+1] <- omega + A * score_scaled[, t+1] + B * (f[, t] - omega)
 
       # Convert f to transition probabilities using clamped logistic
-      p_trans[, t+1] <- logistic_clamped(f[, t+1])
+      p_trans[, t+1] <- f_to_params_loop(f[, t+1])
     }
   }
 
@@ -596,12 +614,16 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 #' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
+#' \donttest{
 #' # Estimate model with diagonal probabilities
-#' y <- rnorm(1000)
-#' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=5)
-#' 
+#' y <- rnorm(200)
+#' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=3,
+#'                                   B_burnin=20, C=10)
+#'
 #' # Estimate model with off-diagonal probabilities
-#' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
+#' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=3,
+#'                                      B_burnin=20, C=10)
+#' }
 #' @export
 estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,

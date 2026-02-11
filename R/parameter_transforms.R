@@ -280,14 +280,21 @@ transform_parameters <- function(par) {
   if (any(sigma2 <= 0)) {
     stop("Variance parameters must be positive for transformation")
   }
-  if (any(trans_prob <= 0) || any(trans_prob >= 1)) {
-    stop("Transition probabilities must be strictly between 0 and 1")
-  }
-  
+
   # Apply transformations
   mu_t <- mu  # Means unchanged
   sigma2_t <- log(sigma2)  # Log transformation
-  trans_prob_t <- logit(trans_prob)  # Logit transformation
+
+  if (attr(par, "diag_probs")) {
+    # Diagonal: probabilities in (0,1), use logit
+    if (any(trans_prob <= 0) || any(trans_prob >= 1)) {
+      stop("Transition probabilities must be strictly between 0 and 1")
+    }
+    trans_prob_t <- logit(trans_prob)
+  } else {
+    # Off-diagonal softmax: already unconstrained reals, identity transform
+    trans_prob_t <- trans_prob
+  }
   
   # Build transformed vector
   par_t <- c(mu_t, sigma2_t, trans_prob_t)
@@ -342,7 +349,13 @@ untransform_parameters <- function(par_t) {
   # Apply inverse transformations
   mu <- mu_t  # Means unchanged
   sigma2 <- exp(sigma2_t)  # Exp transformation
-  trans_prob <- logistic(trans_prob_t)  # Logistic transformation
+
+  if (attr(par_t, "diag_probs")) {
+    trans_prob <- logistic(trans_prob_t)  # Logistic transformation
+  } else {
+    # Off-diagonal softmax: already in natural unconstrained space
+    trans_prob <- trans_prob_t
+  }
   
   # Build natural vector
   par <- c(mu, sigma2, trans_prob)

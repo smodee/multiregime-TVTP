@@ -35,6 +35,6 @@ Returns the negative log-likelihood for compatibility with optimization function
 par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)
 par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant",
                                      diag_probs=TRUE, equal_variances=FALSE)
-y <- rnorm(1000)
-loglik <- Rfiltering_Const(par_diag, y, 100, 50)
+y <- rnorm(200)
+loglik <- Rfiltering_Const(par_diag, y, 20, 10)
 }

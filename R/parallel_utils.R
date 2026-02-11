@@ -170,11 +170,7 @@ get_parallel_allocation <- function(total_cores, num_repetitions, n_starts) {
 #' @examples
 #' \dontrun{
 #' allocation <- get_parallel_allocation(6, 50, 3)
-#' if (is_coordinated_parallel(allocation)) {
-#'   # Set up simulation-level parallelization
-#' } else {
-#'   # Use estimation-only parallelization
-#' }
+#' is_coordinated_parallel(allocation)
 #' }
 is_coordinated_parallel <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {
@@ -194,11 +190,7 @@ is_coordinated_parallel <- function(allocation) {
 #' @examples
 #' \dontrun{
 #' allocation <- get_parallel_allocation(1, 10, 3)
-#' if (is_parallel(allocation)) {
-#'   # Some form of parallelization enabled
-#' } else {
-#'   # Fully sequential execution
-#' }
+#' is_parallel(allocation)
 #' }
 is_parallel <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {
@@ -219,7 +211,7 @@ is_parallel <- function(allocation) {
 #' @examples
 #' \dontrun{
 #' allocation <- get_parallel_allocation(4, 20, 3)
-#' cat("Strategy:", describe_parallel_strategy(allocation))
+#' describe_parallel_strategy(allocation)
 #' }
 describe_parallel_strategy <- function(allocation) {
   if (!is.list(allocation) || !all(c("sim_workers", "cores_per_sim") %in% names(allocation))) {

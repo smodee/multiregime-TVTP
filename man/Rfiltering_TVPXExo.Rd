@@ -40,7 +40,7 @@ as attributes (expensive during optimization, useful for final results).
 par_diag <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.1, 0.2)
 par_diag <- set_parameter_attributes(par_diag, K=2, model_type="exogenous",
                                      diag_probs=TRUE, equal_variances=FALSE)
-X_Exo <- rnorm(1000)
-y <- rnorm(1000)
-loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 100, 50)
+X_Exo <- rnorm(200)
+y <- rnorm(200)
+loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 20, 10)
 }

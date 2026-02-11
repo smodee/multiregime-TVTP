@@ -87,7 +87,7 @@ for K=2.
 }
 \examples{
 # Setup for a 2-regime model with diagonal parameterization
-y <- rnorm(1000)
+y <- rnorm(200)
 gh_setup <- setup_gauss_hermite_quadrature(y)
 
 # Model parameters (diagonal parameterization)

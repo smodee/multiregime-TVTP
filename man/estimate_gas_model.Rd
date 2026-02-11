@@ -68,10 +68,14 @@ using the new attribute-based parameter system. This enables exact validation ag
 the original simulation.R implementation when diag_probs=TRUE.
 }
 \examples{
+\donttest{
 # Estimate model with diagonal probabilities
-y <- rnorm(1000)
-result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=5)
+y <- rnorm(200)
+result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=3,
+                                  B_burnin=20, C=10)
 
 # Estimate model with off-diagonal probabilities
-result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=5)
+result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=3,
+                                     B_burnin=20, C=10)
+}
 }

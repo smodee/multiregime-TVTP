@@ -24,15 +24,15 @@
 #' @examples
 #' # Generate data using diagonal parameterization (original style)
 #' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9, 0.1, 0.1)  # mu, sigma2, p11, p22, A1, A2
-#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp", 
+#' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' data_sim <- dataTVPCD(10, 1000, par_diag)
-#' 
+#' data_sim <- dataTVPCD(3, 200, par_diag)
+#'
 #' # Generate data using off-diagonal parameterization (new style)
 #' par_offdiag <- c(-1, 1, 0.5, 0.5, 0.2, 0.1, 0.1, 0.1)  # mu, sigma2, p12, p21, A12, A21
 #' par_offdiag <- set_parameter_attributes(par_offdiag, K=2, model_type="tvp",
 #'                                         diag_probs=FALSE, equal_variances=FALSE)
-#' data_sim <- dataTVPCD(10, 1000, par_offdiag)
+#' data_sim <- dataTVPCD(3, 200, par_offdiag)
 #' @export
 dataTVPCD <- function(M, N, par, burn_in = 100) {
 
@@ -60,10 +60,17 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
 
-  # Get baseline transition probabilities that are logit-transformed
+  # Get baseline transition parameters in f-space
   # omega_LR is the long-run (unconditional) value of f
   # omega is the intercept in the AR(1) process: f[t+1] = omega + A * y[t]
-  omega_LR <- logit(init_trans)
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+  }
+  omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)
 
   for (i in 1:M) {
@@ -84,7 +91,7 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
     # =========================================================================
     # Set f[1] = omega_LR (long-run value)
     f[, 1] <- omega_LR
-    p_trans[, 1] <- logistic(f[, 1])
+    p_trans[, 1] <- f_to_params(f[, 1])
 
     # Compute initial predicted probabilities using stationary distribution
     # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -109,7 +116,7 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
       # Update f for next time step: f[t+1] = omega + A * y[t]
       # This is done at the BEGINNING of each iteration (matching original)
       f[, t + 1] <- omega + A * y.sim[t]
-      p_trans[, t + 1] <- logistic(f[, t + 1])
+      p_trans[, t + 1] <- f_to_params(f[, t + 1])
 
       # Compute predicted probabilities X_tlag[t+1] using generalized formula
       # Works for any K>=2
@@ -161,8 +168,8 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
 #' par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9, 0.1, 0.1)
 #' par_diag <- set_parameter_attributes(par_diag, K=2, model_type="tvp",
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
-#' y <- rnorm(1000)
-#' loglik <- Rfiltering_TVP(par_diag, y, 100, 50)
+#' y <- rnorm(200)
+#' loglik <- Rfiltering_TVP(par_diag, y, 20, 10)
 #' @export
 Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
 
@@ -207,10 +214,17 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
     eta[k, ] <- dnorm(y, mu[k], sqrt_sigma2[k])
   }
 
-  # Get baseline transition probabilities that are logit-transformed
+  # Get baseline transition parameters in f-space
   # omega_LR is the long-run (unconditional) value of f
   # omega is the intercept in the AR(1) process: f[t+1] = omega + A * y[t]
-  omega_LR <- logit(init_trans)
+  if (diag_probs) {
+    params_to_f <- logit
+    f_to_params <- logistic
+  } else {
+    params_to_f <- identity
+    f_to_params <- identity
+  }
+  omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
 
   # Initialize f values for transition probabilities
@@ -222,7 +236,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   # =========================================================================
   # At t=1, use omega_LR (long-run value) for initial transition probabilities
   f[, 1] <- omega_LR
-  p_trans[, 1] <- logistic(f[, 1])
+  p_trans[, 1] <- f_to_params(f[, 1])
 
   # Compute initial predicted probabilities using stationary distribution
   # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -246,7 +260,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   # =========================================================================
   if (M >= 2) {
     f[, 2] <- omega
-    p_trans[, 2] <- logistic(f[, 2])
+    p_trans[, 2] <- f_to_params(f[, 2])
   }
 
   # =========================================================================
@@ -272,7 +286,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
       # f[t+1] = omega + A * y[t]
       if (t < M - 1) {
         f[, t+1] <- omega + A * y[t]
-        p_trans[, t+1] <- logistic(f[, t+1])
+        p_trans[, t+1] <- f_to_params(f[, t+1])
       }
     }
   }
@@ -284,7 +298,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
     # Need to set f[,M] if not already set
     if (M > 2) {
       f[, M] <- omega + A * y[M-1]
-      p_trans[, M] <- logistic(f[, M])
+      p_trans[, M] <- f_to_params(f[, M])
     }
 
     # Generate predicted probabilities using generalized formula
@@ -355,12 +369,16 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
 #' the original simulation.R implementation when diag_probs=TRUE.
 #'
 #' @examples
+#' \donttest{
 #' # Estimate model with diagonal probabilities (original style)
-#' y <- rnorm(1000)
-#' result_diag <- estimate_tvp_model(y, K=2, diag_probs=TRUE, n_starts=5)
-#' 
-#' # Estimate model with off-diagonal probabilities (new style)  
-#' result_offdiag <- estimate_tvp_model(y, K=2, diag_probs=FALSE, n_starts=5)
+#' y <- rnorm(200)
+#' result_diag <- estimate_tvp_model(y, K=2, diag_probs=TRUE, n_starts=3,
+#'                                   B=20, C=10)
+#'
+#' # Estimate model with off-diagonal probabilities (new style)
+#' result_offdiag <- estimate_tvp_model(y, K=2, diag_probs=FALSE, n_starts=3,
+#'                                      B=20, C=10)
+#' }
 #' @export
 estimate_tvp_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,

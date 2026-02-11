@@ -22,6 +22,6 @@ and user feedback.
 \examples{
 \dontrun{
 allocation <- get_parallel_allocation(4, 20, 3)
-cat("Strategy:", describe_parallel_strategy(allocation))
+describe_parallel_strategy(allocation)
 }
 }

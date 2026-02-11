@@ -33,12 +33,12 @@
 #'
 #' @examples
 #' # Setup quadrature based on data characteristics
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
-#' 
+#'
 #' # Setup with more nodes for higher precision
 #' gh_setup <- setup_gauss_hermite_quadrature(y, n_nodes = 50)
-#' 
+#'
 #' # Use standardized approach
 #' gh_setup <- setup_gauss_hermite_quadrature(y, method = "standardized")
 #' @export
@@ -130,11 +130,9 @@ setup_gauss_hermite_quadrature <- function(y, n_nodes = 30, method = "data_based
 #' integration parameters, and data characteristics.
 #'
 #' @examples
-#' \dontrun{
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' print(gh_setup)
-#' }
 #' @export
 print.gauss_hermite_setup <- function(x, ...) {
   cat("Gauss-Hermite Quadrature Setup\n")
@@ -164,7 +162,7 @@ print.gauss_hermite_setup <- function(x, ...) {
 #'
 #' @examples
 #' \dontrun{
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #' validate_gauss_hermite_setup(gh_setup)  # Returns TRUE
 #' }
@@ -278,7 +276,7 @@ validate_gauss_hermite_setup <- function(gh_setup) {
 #'
 #' @examples
 #' # Setup for a 2-regime model with diagonal parameterization
-#' y <- rnorm(1000)
+#' y <- rnorm(200)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
 #'
 #' # Model parameters (diagonal parameterization)
@@ -1057,23 +1055,22 @@ validate_scaling_inputs <- function(raw_score, fisher_info, method = "moore_penr
 #' (as noted in Bazzi et al.), we compute a scalar measure that captures
 #' the overall information content.
 #' 
-#' The integration follows the original 2-regime implementation:
-#' I = ∫ \[(d1-d2)²/den\] * φ(y; μ_quad, σ_quad²) dy
-#' 
-#' where d1, d2 are regime densities and den is the total density.
+#' The integration uses the softmax score formula:
+#' \deqn{I = \int \sum_{i,j} s_{ij}(y)^2 \cdot \phi(y; \mu, \sigma^2) \, dy}
+#' where \eqn{s_{ij} = X_{t-1,i} \cdot P_{ij} \cdot (\eta_j - \text{row\_lik}_i) / \text{tot\_lik}}.
 #'
 #' @examples
 #' \dontrun{
 #' # Setup quadrature and calculate Fisher Information
 #' y <- rnorm(1000)
 #' gh_setup <- setup_gauss_hermite_quadrature(y)
-#' 
+#'
 #' K <- 3
 #' mu <- c(-1, 0, 1)
 #' sigma2 <- c(0.5, 1, 1.5)
 #' X_t_prev <- c(0.3, 0.4, 0.3)
-#' p_trans <- rep(0.2, 6)
-#' 
+#' p_trans <- rep(0, 6)  # Softmax parameters (0 = equal probs)
+#'
 #' fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
 #' }
 calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
@@ -1101,65 +1098,51 @@ calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup
   # This represents the distribution we're integrating over
   mu_weights <- gh_setup$mu_quad
   sigma_weights <- gh_setup$sigma_quad
-  
+
+  # Build transition matrix from softmax parameters (does not depend on y_node)
+  P <- transition_matrix_offdiagonal(p_trans, check_validity = FALSE)
+  X_pred <- as.vector(t(P) %*% X_t_prev)
+
   # Numerical integration using Gauss-Hermite quadrature
-  # Following the original implementation in simulation.R
   for (j in 1:n_nodes) {
     # Current quadrature node (y-value)
     y_node <- nodes[j]
     current_weight <- weights[j]
-    
+
     # Calculate regime densities at this node
     regime_densities <- numeric(K)
     for (k in 1:K) {
       regime_densities[k] <- dnorm(y_node, mu[k], sqrt(sigma2[k]))
     }
     
-    # Calculate predicted probabilities for this hypothetical observation
-    # This requires reconstructing the transition matrix from p_trans
-    p_trans_valid <- convert_to_valid_probs(p_trans, K)
-    transition_mat <- transition_matrix(p_trans_valid, check_validity = FALSE)
-    X_pred <- as.vector(transition_mat %*% X_t_prev)
-    
     # Calculate total density (denominator)
     total_density <- sum(regime_densities * X_pred)
     
-    # Calculate Fisher Information components
-    # We need to sum over all regime pairs for the K-regime case
+    # Calculate Fisher Information using softmax score formula
+    # I = E[s(x)^2] where s(x) = d log L / d x_ij
+    # For softmax param x_ij: s_ij = X_{t-1,i} * P[i,j] * (eta[j] - row_lik_i) / tot_lik
     info_star <- 0.0
-    
+
     if (total_density > .Machine$double.eps) {  # Avoid division by zero
-      
-      # Calculate all pairwise likelihood differences
-      # This generalizes the (d1-d2)² term from the original 2-regime case
+
       for (i in 1:K) {
+        row_lik_i <- sum(regime_densities * P[i, ])
         for (l in 1:K) {
-          if (i != l) {  # Only consider different regimes
-            
-            # Likelihood difference between regimes i and l
-            likelihood_diff <- regime_densities[i] - regime_densities[l]
-            
-            # Contribution to Fisher Information
-            # Following the original formula: ((d1-d2)²/den)
-            info_contribution <- (likelihood_diff^2) / total_density
-            
-            # Weight by the probability of being in regime i
-            # This accounts for the regime-specific nature of transitions
-            regime_weight <- X_pred[i]
-            
-            info_star <- info_star + regime_weight * info_contribution
+          if (i != l) {
+            # Softmax score component for parameter x_{i,l}
+            score_il <- X_t_prev[i] * P[i, l] * (regime_densities[l] - row_lik_i) / total_density
+            info_star <- info_star + score_il^2
           }
         }
       }
-      
+
       # Apply the quadrature weight function correction
-      # This accounts for the fact that we're integrating over a specific distribution
-      # Formula from original: (2*π*σ²)^0.5 * exp((y-μ)²/(2*σ²))
-      weight_correction <- sqrt(2 * pi * sigma_weights^2) * 
+      # Formula: (2*pi*sigma^2)^0.5 * exp((y-mu)^2/(2*sigma^2))
+      weight_correction <- sqrt(2 * pi * sigma_weights^2) *
         exp((y_node - mu_weights)^2 / (2 * sigma_weights^2))
-      
+
       info_star <- info_star * weight_correction
-      
+
     } else {
       info_star <- 0.0
     }
@@ -1274,17 +1257,19 @@ validate_fisher_inputs <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
 #' @param eta Vector of regime likelihoods at time t (length K)
 #' @param tot_lik Total likelihood at time t (scalar)
 #' @param X_t_prev Filtered probabilities from previous time step (length K)
-#' @param p_trans Current transition probabilities (length K*(K-1))
+#' @param p_trans Current transition parameters (length K*(K-1)). These are
+#'   unconstrained softmax parameters when using off-diagonal parameterization.
 #' @param K Number of regimes
 #' @return Raw score vector (length K*(K-1))
-#' @details 
-#' Implements equation (13) from Bazzi et al. (2017) for K regimes:
-#' r_t = (p(y_t|θ_i) - p(y_t|θ_j)) / p(y_t|θ) * g(f_t, θ, I_{t-1})
-#' 
-#' The raw score measures how much the observation at time t favors one regime
-#' over another, weighted by the impact on transition probabilities.
-#' 
-#' For a K-regime model, we have K*(K-1) transition probabilities (off-diagonal
+#' @details
+#' Implements the GAS score for K regimes using softmax parameterization.
+#'
+#' For off-diagonal softmax parameters x_ij, the score is derived via the chain
+#' rule through the softmax Jacobian:
+#' \deqn{d \log L / d x_{ij} = X_{t-1,i} \cdot P_{ij} \cdot (\eta_j - \text{row\_lik}_i) / \text{tot\_lik}}
+#' where \eqn{\text{row\_lik}_i = \sum_m \eta_m \cdot P_{im}}.
+#'
+#' For a K-regime model, we have K*(K-1) softmax parameters (off-diagonal
 #' elements of the transition matrix), so the score vector has K*(K-1) elements.
 #'
 #' @examples
@@ -1294,8 +1279,8 @@ validate_fisher_inputs <- function(mu, sigma2, X_t_prev, p_trans, gh_setup, K) {
 #' eta <- c(0.1, 0.8, 0.1)  # Regime likelihoods
 #' tot_lik <- sum(eta * c(0.3, 0.4, 0.3))  # Total likelihood
 #' X_t_prev <- c(0.3, 0.4, 0.3)  # Previous filtered probabilities
-#' p_trans <- rep(0.2, 6)  # Transition probabilities
-#' 
+#' p_trans <- rep(0, 6)  # Softmax parameters (0 = equal probs)
+#'
 #' raw_score <- calculate_raw_score_vector(eta, tot_lik, X_t_prev, p_trans, K)
 #' }
 calculate_raw_score_vector <- function(eta, tot_lik, X_t_prev, p_trans, K) {
@@ -1303,94 +1288,64 @@ calculate_raw_score_vector <- function(eta, tot_lik, X_t_prev, p_trans, K) {
   if (!is.numeric(eta) || length(eta) != K) {
     stop("eta must be a numeric vector of length K")
   }
-  
+
   if (!is.numeric(tot_lik) || length(tot_lik) != 1 || tot_lik <= 0) {
     stop("tot_lik must be a positive scalar")
   }
-  
+
   if (!is.numeric(X_t_prev) || length(X_t_prev) != K) {
     stop("X_t_prev must be a numeric vector of length K")
   }
-  
+
   if (!is.numeric(p_trans) || length(p_trans) != K*(K-1)) {
     stop("p_trans must be a numeric vector of length K*(K-1)")
   }
-  
+
   if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
     stop("K must be an integer >= 2")
   }
-  
-  # Check for valid probabilities
+
+  # Check for valid filtered probabilities
   if (any(X_t_prev < 0) || any(X_t_prev > 1) || abs(sum(X_t_prev) - 1) > 1e-8) {
     stop("X_t_prev must be valid probabilities that sum to 1")
   }
-  
-  if (any(p_trans < 0) || any(p_trans > 1)) {
-    stop("p_trans must contain valid probabilities between 0 and 1")
-  }
-  
+
+  # Build full transition matrix from softmax parameters
+  P <- transition_matrix_offdiagonal(p_trans, check_validity = FALSE)
+
   # Initialize score vector
   n_transition <- K * (K - 1)
   raw_score <- numeric(n_transition)
-  
-  # Calculate likelihood differences and g-vector components
-  # Following equation (13) and (14) from Bazzi et al. (2017)
-  
+
+  # Calculate score using softmax Jacobian
+  # For softmax parameter x_ij:
+  #   d log L / d x_ij = X_{t-1,i} * P[i,j] * (eta[j] - row_lik_i) / tot_lik
+  # where row_lik_i = sum_m(eta[m] * P[i,m])
+
   idx <- 1
-  for (i in 1:K) {        # From regime i
-    for (j in 1:K) {      # To regime j
-      if (i != j) {       # Only off-diagonal transitions
-        
-        # Likelihood difference component (equation 13)
-        # This measures how much the current observation favors regime i vs regime j
-        likelihood_diff <- (eta[i] - eta[j]) / tot_lik
-        
-        # G-vector component (equation 14)
-        # This measures the impact of filtered probabilities on transition probabilities
-        # Following the original 2-regime implementation:
-        # g[1] = X_t[from_regime] * p_trans[idx] * (1 - p_trans[idx])
-        
-        # The g-vector represents the derivative of the transition probability
-        # with respect to the time-varying parameter f_{ij,t}
-        g_component <- X_t_prev[i] * p_trans[idx] * (1 - p_trans[idx])
-        
-        # Raw score is the product of likelihood difference and g-component
-        raw_score[idx] <- likelihood_diff * g_component
-        
+  for (i in 1:K) {
+    # Row likelihood: sum over all columns of eta * P[i,]
+    row_lik_i <- sum(eta * P[i, ])
+
+    for (j in 1:K) {
+      if (i != j) {
+        raw_score[idx] <- X_t_prev[i] * P[i, j] * (eta[j] - row_lik_i) / tot_lik
         idx <- idx + 1
       }
     }
   }
-  
+
   # Add attributes for debugging and analysis
-  attr(raw_score, "likelihood_diffs") <- {
-    diffs <- matrix(0, K, K)
-    idx <- 1
+  attr(raw_score, "transition_matrix") <- P
+
+  attr(raw_score, "row_likelihoods") <- {
+    row_liks <- numeric(K)
     for (i in 1:K) {
-      for (j in 1:K) {
-        if (i != j) {
-          diffs[i, j] <- (eta[i] - eta[j]) / tot_lik
-          idx <- idx + 1
-        }
-      }
+      row_liks[i] <- sum(eta * P[i, ])
     }
-    diffs
+    row_liks
   }
-  
-  attr(raw_score, "g_components") <- {
-    g_comp <- numeric(n_transition)
-    idx <- 1
-    for (i in 1:K) {
-      for (j in 1:K) {
-        if (i != j) {
-          g_comp[idx] <- X_t_prev[i] * p_trans[idx] * (1 - p_trans[idx])
-          idx <- idx + 1
-        }
-      }
-    }
-    g_comp
-  }
-  
+
   return(raw_score)
 }
 

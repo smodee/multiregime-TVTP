@@ -47,7 +47,7 @@ The "standardized" method uses mean=0, sd=1 for standardized integration.
 }
 \examples{
 # Setup quadrature based on data characteristics
-y <- rnorm(1000)
+y <- rnorm(200)
 gh_setup <- setup_gauss_hermite_quadrature(y)
 
 # Setup with more nodes for higher precision

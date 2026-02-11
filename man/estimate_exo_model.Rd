@@ -59,11 +59,15 @@ using the new attribute-based parameter system. This enables exact validation ag
 the original simulation.R implementation when diag_probs=TRUE.
 }
 \examples{
+\donttest{
 # Estimate model with diagonal probabilities
-y <- rnorm(1000)
-X_Exo <- rnorm(1000)
-result_diag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=TRUE, n_starts=5)
+y <- rnorm(200)
+X_Exo <- rnorm(200)
+result_diag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=TRUE, n_starts=3,
+                                  B=20, C=10)
 
 # Estimate model with off-diagonal probabilities
-result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=5)
+result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=3,
+                                     B=20, C=10)
+}
 }
