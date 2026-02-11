@@ -280,7 +280,9 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
       }
       
       # Create constant model parameter vector with proper attributes
-      const_par <- c(mu, sigma2, init_trans)
+      # Use original (unexpanded) sigma2 to match equal_variances attribute
+      original_sigma2 <- extract_parameter_component(par, "sigma2")
+      const_par <- c(mu, original_sigma2, init_trans)
       const_par <- set_parameter_attributes(
         par = const_par,
         K = K,
