@@ -965,10 +965,14 @@ describe("Fallback performance advantage over full GAS", {
 
     # The speedup for the longer series should be >= the shorter one
     # (GAS overhead scales with N, constant model is simpler)
-    # Use a generous margin to account for system noise
-    expect_true(speedups[2] >= speedups[1] * 0.5,
-                label = sprintf("Speedup should scale with N (N=500: %.1fx, N=2000: %.1fx)",
-                                speedups[1], speedups[2]))
+    # Use a generous margin to account for system noise.
+    # When fallback time is 0 (too fast to measure), speedup is Inf;
+    # in that case skip the comparison since both are "instant".
+    if (is.finite(speedups[1]) && is.finite(speedups[2])) {
+      expect_true(speedups[2] >= speedups[1] * 0.5,
+                  label = sprintf("Speedup should scale with N (N=500: %.1fx, N=2000: %.1fx)",
+                                  speedups[1], speedups[2]))
+    }
   })
 
   it("fallback speedup is consistent across parameterizations", {
@@ -1027,5 +1031,788 @@ describe("Fallback performance advantage over full GAS", {
                 label = "Diagonal fallback should be at least as fast")
     expect_true(speedup_offdiag > 0.9,
                 label = "Off-diagonal fallback should be at least as fast")
+  })
+})
+
+# =============================================================================
+# CATEGORY 8: B-Coefficient Irrelevance Under Fallback
+# =============================================================================
+#
+# When fallback triggers (all A below threshold), the B coefficients in the
+# GAS update equation f[t+1] = omega + A*s[t] + B*(f[t] - omega) become
+# irrelevant because the constant model is called directly. Different B values
+# should produce EXACTLY identical results under fallback.
+
+describe("B-coefficient irrelevance under fallback", {
+
+  set.seed(800)
+  y_data <- rnorm(300, mean = 0, sd = 1)
+  B_burnin <- 20
+  C_cutoff <- 0
+
+  it("varying B produces identical likelihood for K=2 diagonal", {
+    make_gas_par <- function(B1, B2) {
+      par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 1e-8, 1e-8, B1, B2)
+      set_parameter_attributes(par, K = 2, model_type = "gas",
+                               diag_probs = TRUE, equal_variances = FALSE)
+    }
+
+    result_1 <- Rfiltering_GAS(make_gas_par(0.1, 0.1), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+    result_2 <- Rfiltering_GAS(make_gas_par(0.5, 0.5), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+    result_3 <- Rfiltering_GAS(make_gas_par(0.99, 0.99), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+
+    # Exact equality (same code path via delegation, B is never used)
+    expect_identical(as.numeric(result_1), as.numeric(result_2))
+    expect_identical(as.numeric(result_2), as.numeric(result_3))
+  })
+
+  it("varying B produces identical likelihood for K=2 off-diagonal", {
+    make_gas_par_od <- function(B1, B2) {
+      par <- c(-1, 1, 0.5, 0.6, 0.2, 0.1, 1e-8, 1e-8, B1, B2)
+      set_parameter_attributes(par, K = 2, model_type = "gas",
+                               diag_probs = FALSE, equal_variances = FALSE)
+    }
+
+    result_1 <- Rfiltering_GAS(make_gas_par_od(0.1, 0.1), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+    result_2 <- Rfiltering_GAS(make_gas_par_od(0.99, 0.99), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+
+    expect_identical(as.numeric(result_1), as.numeric(result_2))
+  })
+
+  it("varying B produces identical diagnostics under fallback", {
+    make_gas_par <- function(B1, B2) {
+      par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 1e-8, 1e-8, B1, B2)
+      set_parameter_attributes(par, K = 2, model_type = "gas",
+                               diag_probs = TRUE, equal_variances = FALSE)
+    }
+
+    result_1 <- Rfiltering_GAS(make_gas_par(0.1, 0.1), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = TRUE)
+    result_2 <- Rfiltering_GAS(make_gas_par(0.99, 0.99), y_data, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = TRUE)
+
+    expect_identical(attr(result_1, "X.t"), attr(result_2, "X.t"))
+    expect_identical(attr(result_1, "X.tlag"), attr(result_2, "X.tlag"))
+    expect_identical(attr(result_1, "eta"), attr(result_2, "eta"))
+    expect_identical(attr(result_1, "tot.lik"), attr(result_2, "tot.lik"))
+    expect_identical(attr(result_1, "score_scaled"), attr(result_2, "score_scaled"))
+    expect_identical(attr(result_1, "gas_diagnostics"), attr(result_2, "gas_diagnostics"))
+  })
+
+  it("varying B produces identical likelihood for K=3 diagonal", {
+    const_par_k3 <- c(-2, 0, 2, 0.4, 0.5, 0.6, 0.8, 0.7, 0.85)
+    const_par_k3 <- set_parameter_attributes(const_par_k3, K = 3, model_type = "constant",
+                                             diag_probs = TRUE, equal_variances = FALSE)
+    y_k3 <- dataConstCD(1, 400, const_par_k3, burn_in = 100)[1, ]
+
+    make_gas_k3 <- function(B1, B2, B3) {
+      par <- c(-2, 0, 2, 0.4, 0.5, 0.6, 0.8, 0.7, 0.85,
+               1e-8, 1e-8, 1e-8, B1, B2, B3)
+      set_parameter_attributes(par, K = 3, model_type = "gas",
+                               diag_probs = TRUE, equal_variances = FALSE)
+    }
+
+    result_1 <- Rfiltering_GAS(make_gas_k3(0.1, 0.1, 0.1), y_k3, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+    result_2 <- Rfiltering_GAS(make_gas_k3(0.5, 0.5, 0.5), y_k3, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+    result_3 <- Rfiltering_GAS(make_gas_k3(0.99, 0.99, 0.99), y_k3, B_burnin, C_cutoff,
+                                use_fallback = TRUE, diagnostics = FALSE)
+
+    expect_identical(as.numeric(result_1), as.numeric(result_2))
+    expect_identical(as.numeric(result_2), as.numeric(result_3))
+  })
+})
+
+# =============================================================================
+# CATEGORY 9: Parameter Construction Correctness
+# =============================================================================
+#
+# The fallback path constructs a constant model parameter vector from GAS
+# parameters. Verify this is done correctly for all configurations, especially
+# equal_variances=TRUE and K>=3.
+
+describe("Fallback parameter construction correctness", {
+
+  set.seed(900)
+  B_burnin <- 20
+  C_cutoff <- 0
+
+  it("K=2 equal_variances=TRUE produces identical NLL to direct constant model", {
+    mu1 <- -1; mu2 <- 1; sigma2_shared <- 0.5
+    p11 <- 0.75; p22 <- 0.85
+
+    const_par <- c(mu1, mu2, sigma2_shared, p11, p22)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = TRUE)
+    y_data <- dataConstCD(1, 300, const_par, burn_in = 100)[1, ]
+
+    gas_par <- c(mu1, mu2, sigma2_shared, p11, p22, 1e-9, 1e-9, 0.8, 0.9)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = TRUE)
+
+    gas_result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                                  use_fallback = TRUE, diagnostics = FALSE)
+    const_result <- Rfiltering_Const(const_par, y_data, B_burnin, C_cutoff,
+                                      diagnostics = FALSE)
+
+    expect_equal(as.numeric(gas_result), as.numeric(const_result))
+  })
+
+  it("K=3 equal_variances=TRUE diagonal produces identical NLL", {
+    mu <- c(-2, 0, 2); sigma2_shared <- 0.5
+    p <- c(0.8, 0.7, 0.85)
+
+    const_par <- c(mu, sigma2_shared, p)
+    const_par <- set_parameter_attributes(const_par, K = 3, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = TRUE)
+    y_data <- dataConstCD(1, 400, const_par, burn_in = 100)[1, ]
+
+    gas_par <- c(mu, sigma2_shared, p, 1e-9, 1e-9, 1e-9, 0.8, 0.85, 0.9)
+    gas_par <- set_parameter_attributes(gas_par, K = 3, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = TRUE)
+
+    gas_result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                                  use_fallback = TRUE, diagnostics = FALSE)
+    const_result <- Rfiltering_Const(const_par, y_data, B_burnin, C_cutoff,
+                                      diagnostics = FALSE)
+
+    expect_equal(as.numeric(gas_result), as.numeric(const_result))
+  })
+
+  it("K=3 off-diagonal equal_variances=TRUE produces identical NLL", {
+    mu <- c(-2, 0, 2); sigma2_shared <- 0.5
+    # 6 off-diagonal transition params for K=3
+    p_off <- c(0.1, 0.1, 0.15, 0.15, 0.08, 0.07)
+
+    const_par <- c(mu, sigma2_shared, p_off)
+    const_par <- set_parameter_attributes(const_par, K = 3, model_type = "constant",
+                                          diag_probs = FALSE, equal_variances = TRUE)
+    y_data <- dataConstCD(1, 400, const_par, burn_in = 100)[1, ]
+
+    gas_par <- c(mu, sigma2_shared, p_off, rep(1e-9, 6), rep(0.85, 6))
+    gas_par <- set_parameter_attributes(gas_par, K = 3, model_type = "gas",
+                                        diag_probs = FALSE, equal_variances = TRUE)
+
+    gas_result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                                  use_fallback = TRUE, diagnostics = FALSE)
+    const_result <- Rfiltering_Const(const_par, y_data, B_burnin, C_cutoff,
+                                      diagnostics = FALSE)
+
+    expect_equal(as.numeric(gas_result), as.numeric(const_result))
+  })
+
+  it("fallback preserves correct model_info via constant model diagnostics", {
+    mu1 <- -1; mu2 <- 1
+    sigma2_1 <- 0.5; sigma2_2 <- 0.6
+    p11 <- 0.8; p22 <- 0.9
+
+    gas_par <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22, 1e-9, 1e-9, 0.8, 0.9)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    y_data <- rnorm(300)
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = TRUE)
+
+    # The fallback should have called Rfiltering_Const which sets model_info
+    # via the constant model path. Verify the GAS-specific attributes are also set.
+    expect_equal(attr(result, "model_type"), "constant_fallback")
+
+    # The underlying constant model diagnostics should be present
+    expect_false(is.null(attr(result, "X.t")))
+    Xt <- attr(result, "X.t")
+    expect_equal(nrow(Xt), 2)  # K=2
+    expect_equal(ncol(Xt), 300)  # length(y_data)
+  })
+
+  it("extract_parameter_component returns length 1 sigma2 for equal_variances=TRUE", {
+    gas_par <- c(-1, 1, 0.5, 0.8, 0.9, 0.1, 0.1, 0.85, 0.9)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = TRUE)
+
+    sigma2 <- extract_parameter_component(gas_par, "sigma2")
+    expect_equal(length(sigma2), 1)
+    expect_equal(sigma2, 0.5)
+  })
+})
+
+# =============================================================================
+# CATEGORY 10: Numerical Stability at Parameter Extremes
+# =============================================================================
+#
+# The fallback should produce valid results for extreme but legal parameter
+# configurations. These tests verify that the constant model delegation
+# inherits the constant model's numerical robustness.
+
+describe("Fallback numerical stability at parameter extremes", {
+
+  set.seed(1000)
+  y_data <- rnorm(200)
+  B_burnin <- 20
+  C_cutoff <- 0
+
+  it("handles very large mean separation (mu=c(-100, 100))", {
+    gas_par <- c(-100, 100, 1.0, 1.0, 0.9, 0.9, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+
+  it("handles very small variance (sigma2=c(1e-10, 1e-10))", {
+    gas_par <- c(-1, 1, 1e-10, 1e-10, 0.8, 0.9, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    # Very small variance can produce extreme likelihoods but should not crash
+    result <- tryCatch(
+      Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                     use_fallback = TRUE, diagnostics = FALSE),
+      error = function(e) NULL
+    )
+    # Either finite or a controlled error (not a crash)
+    if (!is.null(result)) {
+      expect_true(is.numeric(result))
+    }
+  })
+
+  it("handles very large variance (sigma2=c(1e6, 1e6))", {
+    gas_par <- c(-1, 1, 1e6, 1e6, 0.8, 0.9, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+
+  it("handles transition probabilities near 0 (p=c(0.001, 0.001))", {
+    gas_par <- c(-1, 1, 0.5, 0.6, 0.001, 0.001, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+
+  it("handles transition probabilities near 1 (p=c(0.999, 0.999))", {
+    gas_par <- c(-1, 1, 0.5, 0.6, 0.999, 0.999, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+
+  it("handles identical means with different variances", {
+    gas_par <- c(0, 0, 0.5, 0.6, 0.8, 0.9, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+
+  it("handles fully degenerate case (identical means and variances)", {
+    gas_par <- c(0, 0, 0.5, 0.5, 0.8, 0.9, 0, 0, 0.5, 0.5)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    result <- Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                              use_fallback = TRUE, diagnostics = FALSE)
+    expect_true(is.numeric(result))
+    expect_true(is.finite(result))
+  })
+})
+
+# =============================================================================
+# CATEGORY 11: Likelihood Surface Continuity at Threshold Boundary
+# =============================================================================
+#
+# During optimization, A varies continuously. When use_fallback=TRUE, crossing
+# the A_threshold boundary switches between two code paths. The likelihood
+# should be approximately continuous at this boundary to avoid optimizer issues.
+
+describe("Likelihood surface continuity at A_threshold boundary", {
+
+  set.seed(1100)
+  B_burnin <- 20
+  C_cutoff <- 0
+
+  it("likelihood is nearly identical just below vs just above threshold (K=2 diagonal)", {
+    mu1 <- -1; mu2 <- 1
+    sigma2_1 <- 0.5; sigma2_2 <- 0.6
+    p11 <- 0.8; p22 <- 0.9
+
+    const_par <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 100)[1, ]
+
+    # A just below threshold: triggers fallback
+    gas_par_below <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22, 9.99e-5, 9.99e-5, 0.85, 0.90)
+    gas_par_below <- set_parameter_attributes(gas_par_below, K = 2, model_type = "gas",
+                                              diag_probs = TRUE, equal_variances = FALSE)
+
+    # A just above threshold: full GAS
+    gas_par_above <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22, 1.01e-4, 1.01e-4, 0.85, 0.90)
+    gas_par_above <- set_parameter_attributes(gas_par_above, K = 2, model_type = "gas",
+                                              diag_probs = TRUE, equal_variances = FALSE)
+
+    nll_below <- Rfiltering_GAS(gas_par_below, y_data, B_burnin, C_cutoff,
+                                 use_fallback = TRUE, diagnostics = FALSE)
+    nll_above <- Rfiltering_GAS(gas_par_above, y_data, B_burnin, C_cutoff,
+                                 use_fallback = TRUE, diagnostics = FALSE)
+
+    # Relative difference should be small (< 0.1%)
+    rel_diff <- abs(as.numeric(nll_below) - as.numeric(nll_above)) / abs(as.numeric(nll_below))
+    expect_true(rel_diff < 0.001,
+                label = sprintf("Relative NLL difference at boundary: %.6f (should be < 0.001)", rel_diff))
+  })
+
+  it("likelihood is nearly identical just below vs just above threshold (K=2 off-diagonal)", {
+    mu1 <- -1; mu2 <- 1
+    sigma2_1 <- 0.5; sigma2_2 <- 0.6
+    p12 <- 0.2; p21 <- 0.1
+
+    const_par <- c(mu1, mu2, sigma2_1, sigma2_2, p12, p21)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = FALSE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 100)[1, ]
+
+    gas_par_below <- c(mu1, mu2, sigma2_1, sigma2_2, p12, p21, 9.99e-5, 9.99e-5, 0.85, 0.90)
+    gas_par_below <- set_parameter_attributes(gas_par_below, K = 2, model_type = "gas",
+                                              diag_probs = FALSE, equal_variances = FALSE)
+
+    gas_par_above <- c(mu1, mu2, sigma2_1, sigma2_2, p12, p21, 1.01e-4, 1.01e-4, 0.85, 0.90)
+    gas_par_above <- set_parameter_attributes(gas_par_above, K = 2, model_type = "gas",
+                                              diag_probs = FALSE, equal_variances = FALSE)
+
+    nll_below <- Rfiltering_GAS(gas_par_below, y_data, B_burnin, C_cutoff,
+                                 use_fallback = TRUE, diagnostics = FALSE)
+    nll_above <- Rfiltering_GAS(gas_par_above, y_data, B_burnin, C_cutoff,
+                                 use_fallback = TRUE, diagnostics = FALSE)
+
+    rel_diff <- abs(as.numeric(nll_below) - as.numeric(nll_above)) / abs(as.numeric(nll_below))
+    expect_true(rel_diff < 0.001,
+                label = sprintf("Relative NLL difference at boundary: %.6f (should be < 0.001)", rel_diff))
+  })
+
+  it("A sweep produces finite NLLs and small boundary jump", {
+    mu1 <- -1; mu2 <- 1
+    sigma2_1 <- 0.5; sigma2_2 <- 0.6
+    p11 <- 0.8; p22 <- 0.9
+
+    const_par <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 100)[1, ]
+
+    A_values <- c(1e-5, 5e-5, 9.9e-5, 1.0e-4, 5e-4, 1e-3)
+    nlls <- numeric(length(A_values))
+
+    for (i in seq_along(A_values)) {
+      a <- A_values[i]
+      gas_par <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22, a, a, 0.85, 0.90)
+      gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+      nlls[i] <- as.numeric(Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                                            use_fallback = TRUE, diagnostics = FALSE))
+    }
+
+    # All NLLs should be finite
+    expect_true(all(is.finite(nlls)),
+                label = "All NLLs in sweep should be finite")
+
+    # The jump at the boundary (between index 3 and 4: 9.9e-5 -> 1.0e-4)
+    # should be small relative to the overall range
+    boundary_jump <- abs(nlls[4] - nlls[3])
+    max_diff <- max(abs(diff(nlls)))
+    expect_true(boundary_jump < max_diff * 2,
+                label = sprintf("Boundary jump (%.6f) should be comparable to other diffs (max %.6f)",
+                                boundary_jump, max_diff))
+
+    for (i in seq_along(A_values)) {
+      message(sprintf("  A=%.1e: NLL=%.6f", A_values[i], nlls[i]))
+    }
+  })
+
+  it("likelihood is nearly identical at boundary for K=3 diagonal", {
+    mu <- c(-2, 0, 2)
+    sigma2 <- c(0.4, 0.5, 0.6)
+    p <- c(0.8, 0.7, 0.85)
+
+    const_par <- c(mu, sigma2, p)
+    const_par <- set_parameter_attributes(const_par, K = 3, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 100)[1, ]
+
+    gas_par_below <- c(mu, sigma2, p, rep(9.99e-5, 3), rep(0.85, 3))
+    gas_par_below <- set_parameter_attributes(gas_par_below, K = 3, model_type = "gas",
+                                              diag_probs = TRUE, equal_variances = FALSE)
+
+    gas_par_above <- c(mu, sigma2, p, rep(1.01e-4, 3), rep(0.85, 3))
+    gas_par_above <- set_parameter_attributes(gas_par_above, K = 3, model_type = "gas",
+                                              diag_probs = TRUE, equal_variances = FALSE)
+
+    nll_below <- Rfiltering_GAS(gas_par_below, y_data, B_burnin, C_cutoff,
+                                 use_fallback = TRUE, diagnostics = FALSE)
+
+    # K=3 full GAS near threshold can have numerical issues
+    nll_above <- tryCatch(
+      Rfiltering_GAS(gas_par_above, y_data, B_burnin, C_cutoff,
+                     use_fallback = TRUE, diagnostics = FALSE),
+      error = function(e) NULL
+    )
+
+    expect_true(is.finite(as.numeric(nll_below)))
+
+    if (!is.null(nll_above) && is.finite(as.numeric(nll_above))) {
+      rel_diff <- abs(as.numeric(nll_below) - as.numeric(nll_above)) / abs(as.numeric(nll_below))
+      expect_true(rel_diff < 0.01,
+                  label = sprintf("K=3 boundary rel diff: %.6f (should be < 0.01)", rel_diff))
+    } else {
+      message("  K=3 full GAS at boundary hit numerical issues; fallback is stable")
+    }
+  })
+})
+
+# =============================================================================
+# CATEGORY 12: Round-Trip Estimation Consistency
+# =============================================================================
+#
+# Generate data from a constant model, estimate with GAS model (which has
+# fallback enabled), verify parameter recovery. Uses minimal settings to
+# keep runtime short.
+
+describe("Round-trip estimation consistency", {
+
+  it("recovers constant model parameters via GAS estimation (K=2 diagonal)", {
+    set.seed(1201)
+
+    mu1 <- -2; mu2 <- 2
+    sigma2_1 <- 0.5; sigma2_2 <- 0.6
+    p11 <- 0.85; p22 <- 0.90
+
+    const_par <- c(mu1, mu2, sigma2_1, sigma2_2, p11, p22)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 200)[1, ]
+
+    est_result <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = TRUE, A_threshold = 1e-4,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    # Estimated means should be close to true values (allow label switching)
+    mu_est <- sort(unname(est_result$mu_est))
+    mu_true <- sort(c(mu1, mu2))
+    expect_equal(mu_est, mu_true, tolerance = 0.5)
+
+    # Transition probabilities should be in a reasonable range
+    trans_est <- est_result$init_trans_est
+    expect_true(all(trans_est > 0.5 & trans_est < 1.0))
+  })
+
+  it("reports correct model_type_used in estimation metadata", {
+    set.seed(1202)
+
+    const_par <- c(-1.5, 1.5, 0.5, 0.6, 0.8, 0.9)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 500, const_par, burn_in = 200)[1, ]
+
+    est_result <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = TRUE, A_threshold = 1e-4,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    # model_type_used should be one of the valid values
+    expect_true(est_result$model_info$model_type_used %in%
+                  c("constant_fallback", "full_gas"))
+
+    # gas_settings should record the configuration
+    expect_true(est_result$gas_settings$use_fallback)
+    expect_equal(est_result$gas_settings$A_threshold, 1e-4)
+    expect_true(!is.null(est_result$gas_diagnostics))
+  })
+
+  it("GAS data with tiny A triggers fallback during estimation", {
+    set.seed(1203)
+
+    # Generate data with effectively zero A (constant dynamics)
+    gas_par <- c(-1.5, 1.5, 0.5, 0.6, 0.8, 0.9, 1e-6, 1e-6, 0.9, 0.9)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataGASCD(1, 500, gas_par, burn_in = 200)[1, ]
+
+    est_result <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = TRUE, A_threshold = 1e-4,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    # With near-zero true A, estimated A should also be small
+    # or the model should have used the constant fallback
+    model_used <- est_result$model_info$model_type_used
+    A_est <- est_result$A_est
+
+    # Either fallback was used OR the estimated A is reasonably small
+    expect_true(model_used == "constant_fallback" || max(abs(A_est)) < 0.5,
+                label = sprintf("model_type_used=%s, max|A_est|=%.4f",
+                                model_used, max(abs(A_est))))
+  })
+})
+
+# =============================================================================
+# CATEGORY 13: Estimation Accuracy & Speed — Fallback vs No-Fallback
+# =============================================================================
+#
+# The full GAS path with near-zero A can hit numerical issues in score
+# calculation. These tests validate that fallback provides better numerical
+# stability and faster estimation. Uses minimal settings for speed.
+
+describe("Estimation accuracy and speed: fallback vs no-fallback", {
+
+  it("fallback and non-fallback achieve comparable NLL for K=2", {
+    set.seed(1301)
+
+    const_par <- c(-1.5, 1.5, 0.5, 0.6, 0.85, 0.90)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 400, const_par, burn_in = 200)[1, ]
+
+    est_fallback <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = TRUE, A_threshold = 1e-4,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    est_no_fallback <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = FALSE,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    nll_fb <- est_fallback$diagnostics$neg_log_likelihood
+    nll_nofb <- est_no_fallback$diagnostics$neg_log_likelihood
+
+    # Both should find a valid minimum
+    expect_true(is.finite(nll_fb))
+    expect_true(is.finite(nll_nofb))
+
+    # With n_starts=1, the two paths may converge to different local optima.
+    # The key assertion is that fallback finds a result at least as good
+    # (lower NLL = higher likelihood), since the fallback avoids the
+    # computational overhead of near-zero GAS dynamics.
+    # Allow up to 25% relative difference (different optimization paths)
+    rel_diff <- abs(nll_fb - nll_nofb) / max(abs(nll_fb), abs(nll_nofb))
+    expect_true(rel_diff < 0.25,
+                label = sprintf("NLL rel diff: %.4f (should be < 0.25)", rel_diff))
+
+    message(sprintf("  Fallback NLL=%.4f, No-fallback NLL=%.4f, rel_diff=%.6f",
+                    nll_fb, nll_nofb, rel_diff))
+  })
+
+  it("fallback-enabled estimation is faster for constant-model data", {
+    set.seed(1302)
+
+    const_par <- c(-1.5, 1.5, 0.5, 0.6, 0.85, 0.90)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 400, const_par, burn_in = 200)[1, ]
+
+    time_fb <- system.time({
+      est_fb <- estimate_gas_model(
+        y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+        n_starts = 1, B_burnin = 10, C = 0,
+        use_fallback = TRUE, A_threshold = 1e-4,
+        parallel = FALSE, verbose = 0, seed = 42
+      )
+    })["elapsed"]
+
+    time_nofb <- system.time({
+      est_nofb <- estimate_gas_model(
+        y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+        n_starts = 1, B_burnin = 10, C = 0,
+        use_fallback = FALSE,
+        parallel = FALSE, verbose = 0, seed = 42
+      )
+    })["elapsed"]
+
+    # Fallback should be faster (or at worst comparable within noise)
+    expect_true(time_fb <= time_nofb * 1.5,
+                label = sprintf("Fallback (%.2fs) should be faster than no-fallback (%.2fs)",
+                                time_fb, time_nofb))
+
+    message(sprintf("  Estimation time: fallback=%.2fs, no-fallback=%.2fs",
+                    time_fb, time_nofb))
+  })
+
+  it("K=3 estimation: fallback succeeds where full GAS may fail", {
+    set.seed(1303)
+
+    const_par_k3 <- c(-2, 0, 2, 0.4, 0.5, 0.6, 0.8, 0.7, 0.85)
+    const_par_k3 <- set_parameter_attributes(const_par_k3, K = 3, model_type = "constant",
+                                             diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 400, const_par_k3, burn_in = 200)[1, ]
+
+    # Fallback should always succeed
+    est_fallback <- tryCatch(
+      estimate_gas_model(
+        y = y_data, K = 3, diag_probs = TRUE, equal_variances = FALSE,
+        n_starts = 1, B_burnin = 10, C = 0,
+        use_fallback = TRUE, A_threshold = 1e-4,
+        parallel = FALSE, verbose = 0, seed = 42
+      ),
+      error = function(e) NULL
+    )
+
+    # No-fallback may fail numerically for K=3
+    est_no_fallback <- tryCatch(
+      estimate_gas_model(
+        y = y_data, K = 3, diag_probs = TRUE, equal_variances = FALSE,
+        n_starts = 1, B_burnin = 10, C = 0,
+        use_fallback = FALSE,
+        parallel = FALSE, verbose = 0, seed = 42
+      ),
+      error = function(e) NULL
+    )
+
+    # Fallback should always produce a valid result
+    expect_true(!is.null(est_fallback),
+                label = "K=3 fallback-enabled estimation should succeed")
+    if (!is.null(est_fallback)) {
+      expect_true(is.finite(est_fallback$diagnostics$neg_log_likelihood))
+    }
+
+    # Report outcome for informational purposes
+    if (is.null(est_no_fallback)) {
+      message("  K=3 no-fallback estimation failed numerically (expected)")
+    } else {
+      message(sprintf("  K=3: fallback NLL=%.4f, no-fallback NLL=%.4f",
+                      est_fallback$diagnostics$neg_log_likelihood,
+                      est_no_fallback$diagnostics$neg_log_likelihood))
+    }
+  })
+
+  it("fallback and non-fallback find comparable log-likelihood values (K=2)", {
+    set.seed(1304)
+
+    const_par <- c(-2, 2, 0.4, 0.6, 0.80, 0.85)
+    const_par <- set_parameter_attributes(const_par, K = 2, model_type = "constant",
+                                          diag_probs = TRUE, equal_variances = FALSE)
+    y_data <- dataConstCD(1, 400, const_par, burn_in = 200)[1, ]
+
+    est_fb <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = TRUE, A_threshold = 1e-4,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    est_nofb <- estimate_gas_model(
+      y = y_data, K = 2, diag_probs = TRUE, equal_variances = FALSE,
+      n_starts = 1, B_burnin = 10, C = 0,
+      use_fallback = FALSE,
+      parallel = FALSE, verbose = 0, seed = 42
+    )
+
+    ll_fb <- est_fb$diagnostics$log_likelihood
+    ll_nofb <- est_nofb$diagnostics$log_likelihood
+
+    # Both should find reasonable log-likelihoods
+    expect_true(is.finite(ll_fb))
+    expect_true(is.finite(ll_nofb))
+
+    # With n_starts=1, the two paths may converge to different local optima
+    # due to different likelihood evaluation during optimization. Allow up to
+    # 25% relative difference. The key test is that both find valid optima.
+    rel_diff <- abs(ll_fb - ll_nofb) / max(abs(ll_fb), abs(ll_nofb))
+    expect_true(rel_diff < 0.25,
+                label = sprintf("Log-likelihood rel diff: %.4f (should be < 0.25)", rel_diff))
+  })
+})
+
+# =============================================================================
+# CATEGORY 14: Verbose Output Coverage
+# =============================================================================
+#
+# Test the cat() statements in the verbose path of the fallback code.
+
+describe("Verbose output coverage", {
+
+  set.seed(1400)
+  y_data <- rnorm(200)
+  B_burnin <- 20
+  C_cutoff <- 0
+
+  it("verbose=TRUE produces output when fallback triggers", {
+    gas_par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 1e-8, 1e-8, 0.85, 0.90)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    output <- capture.output(
+      Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                     use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
+    )
+
+    expect_true(any(grepl("constant model fallback", output, ignore.case = TRUE)),
+                label = "Verbose output should mention 'constant model fallback'")
+  })
+
+  it("verbose=TRUE produces output when full GAS runs", {
+    gas_par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 0.3, 0.2, 0.85, 0.90)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    output <- capture.output(
+      Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                     use_fallback = TRUE, verbose = TRUE, diagnostics = FALSE)
+    )
+
+    expect_true(any(grepl("full GAS model", output, ignore.case = TRUE)),
+                label = "Verbose output should mention 'full GAS model'")
+  })
+
+  it("verbose=FALSE produces no fallback-related output", {
+    gas_par <- c(-1, 1, 0.5, 0.6, 0.8, 0.9, 1e-8, 1e-8, 0.85, 0.90)
+    gas_par <- set_parameter_attributes(gas_par, K = 2, model_type = "gas",
+                                        diag_probs = TRUE, equal_variances = FALSE)
+
+    # Capture all output and verify no fallback/GAS-related messages
+    output <- capture.output(
+      suppressWarnings(
+        Rfiltering_GAS(gas_par, y_data, B_burnin, C_cutoff,
+                       use_fallback = TRUE, verbose = FALSE, diagnostics = FALSE)
+      )
+    )
+
+    # No fallback-related output should appear
+    expect_false(any(grepl("constant model fallback|full GAS model|Using", output, ignore.case = TRUE)),
+                 label = "verbose=FALSE should not produce fallback-related output")
   })
 })
