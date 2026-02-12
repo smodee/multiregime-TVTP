@@ -458,15 +458,21 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       }
 
     } else {
-      # Off-diagonal softmax parameterisation: unconstrained reals.
-      # Start 1: all zeros (uniform transitions). Subsequent starts use
-      # Normal(0, sd) with sd scaling from a base of 1.0 so that the
-      # softmax can produce meaningfully asymmetric transition matrices.
+      # Off-diagonal logit parameterisation: probabilities in (0, 1).
+      # Small values ensure row sums don't exceed 1 (diagonal stays positive).
+      # Start 1: sensible default (0.1). Subsequent starts use Beta distribution
+      # centered at 0.15 whose concentration decreases with n_starts.
+      max_per_entry <- 0.9 / (K - 1)  # Leave at least 10% for diagonal
       if (i == 1 || n_starts == 1) {
-        trans_prob_start <- rep(0, n_transition)
+        trans_prob_start <- rep(0.1, n_transition)
       } else {
-        sd_trans <- 1.0 * log(n_starts) / log(7)
-        trans_prob_start <- rnorm(n_transition, mean = 0, sd = sd_trans)
+        center <- min(0.15, max_per_entry * 0.5)
+        concentration <- 7 * log(7) / log(n_starts)
+        a_beta <- concentration * center
+        b_beta <- concentration * (1 - center)
+        trans_prob_start <- rbeta(n_transition, shape1 = a_beta, shape2 = b_beta)
+        # Clamp to valid range
+        trans_prob_start <- pmin(pmax(trans_prob_start, 0.01), min(0.3, max_per_entry))
       }
     }
 
@@ -540,7 +546,7 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       if (diag_probs) {
         trans_prob_fallback <- rep(0.8, K)  # High persistence
       } else {
-        trans_prob_fallback <- rep(0, n_transition)  # Equal probs (softmax params)
+        trans_prob_fallback <- rep(0.1, n_transition)  # Small off-diagonal probs
       }
       
       if (model_type == "constant") {

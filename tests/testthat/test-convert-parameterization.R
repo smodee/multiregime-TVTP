@@ -1,10 +1,14 @@
-# Tests for convert_parameterization() and inverse softmax
+# Tests for convert_parameterization()
 
 test_that("convert diag to off-diag round-trip for K=2", {
   diag_params <- c(0.8, 0.9)
   off_diag <- multiregimeTVTP:::convert_parameterization(diag_params, from_diag = TRUE)
 
-  # Reconstruct matrix from softmax params
+  # Off-diagonal probs: p12 = 1-0.8 = 0.2, p21 = 1-0.9 = 0.1
+  expect_equal(off_diag[1], 0.2, tolerance = 1e-10)
+  expect_equal(off_diag[2], 0.1, tolerance = 1e-10)
+
+  # Reconstruct matrix from off-diagonal params
   P <- transition_matrix(off_diag, diag_probs = FALSE)
   expect_equal(P[1, 1], 0.8, tolerance = 1e-10)
   expect_equal(P[2, 2], 0.9, tolerance = 1e-10)
@@ -24,21 +28,21 @@ test_that("convert diag to off-diag round-trip for K=3", {
 })
 
 test_that("convert off-diag to diag extracts correct diagonal", {
-  params <- c(-1, -2)  # K=2: x_12, x_21
+  params <- c(0.2, 0.1)  # K=2: p12, p21
   P <- transition_matrix(params, diag_probs = FALSE)
   diag_params <- multiregimeTVTP:::convert_parameterization(params, from_diag = FALSE)
 
   expect_equal(diag_params, diag(P), tolerance = 1e-10)
 })
 
-test_that("inverse softmax is correct: x_ij = log(p_ij / p_ii)", {
+test_that("off-diag probabilities are correct: p_ij values", {
   # Start from known probabilities
   diag_params <- c(0.6, 0.85)
   off_diag <- multiregimeTVTP:::convert_parameterization(diag_params, from_diag = TRUE)
 
-  # For K=2: off_diag[1] = log(p12/p11), off_diag[2] = log(p21/p22)
-  expect_equal(off_diag[1], log(0.4 / 0.6), tolerance = 1e-10)
-  expect_equal(off_diag[2], log(0.15 / 0.85), tolerance = 1e-10)
+  # For K=2: off_diag[1] = p12 = 1-0.6 = 0.4, off_diag[2] = p21 = 1-0.85 = 0.15
+  expect_equal(off_diag[1], 0.4, tolerance = 1e-10)
+  expect_equal(off_diag[2], 0.15, tolerance = 1e-10)
 })
 
 test_that("full round-trip: diag -> off-diag -> matrix -> diag", {
