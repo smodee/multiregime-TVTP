@@ -1100,6 +1100,12 @@ calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup
   mu_weights <- gh_setup$mu_quad
   sigma_weights <- gh_setup$sigma_quad
 
+  # Build transition matrix from off-diagonal probabilities (invariant across quadrature nodes)
+  p_trans_valid <- convert_to_valid_probs(p_trans, diag_probs = FALSE)
+  transition_mat <- transition_matrix(p_trans_valid, diag_probs = FALSE, check_validity = FALSE)
+  # X_pred = P^T %*% X_t_prev (P is row-stochastic, matching compute_predicted_probs)
+  X_pred <- as.vector(t(transition_mat) %*% X_t_prev)
+
   # Numerical integration using Gauss-Hermite quadrature
   # Following the original implementation in simulation.R
   for (j in 1:n_nodes) {
@@ -1112,12 +1118,6 @@ calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup
     for (k in 1:K) {
       regime_densities[k] <- dnorm(y_node, mu[k], sqrt(sigma2[k]))
     }
-
-    # Calculate predicted probabilities for this hypothetical observation
-    # This requires reconstructing the transition matrix from p_trans
-    p_trans_valid <- convert_to_valid_probs(p_trans, K)
-    transition_mat <- transition_matrix(p_trans_valid, check_validity = FALSE)
-    X_pred <- as.vector(transition_mat %*% X_t_prev)
 
     # Calculate total density (denominator)
     total_density <- sum(regime_densities * X_pred)
@@ -1214,11 +1214,11 @@ calculate_fisher_information <- function(mu, sigma2, X_t_prev, p_trans, gh_setup
 #' }
 calculate_predictive_probs <- function(p_trans, X_t_prev, K) {
   # Convert to valid transition probabilities and create matrix
-  p_trans_valid <- convert_to_valid_probs(p_trans, K)
-  transition_mat <- transition_matrix(p_trans_valid, check_validity = FALSE)
-  
-  # Calculate predictive probabilities
-  X_pred <- as.vector(transition_mat %*% X_t_prev)
+  p_trans_valid <- convert_to_valid_probs(p_trans, diag_probs = FALSE)
+  transition_mat <- transition_matrix(p_trans_valid, diag_probs = FALSE, check_validity = FALSE)
+
+  # Calculate predictive probabilities: X_pred = P^T %*% X_t_prev
+  X_pred <- as.vector(t(transition_mat) %*% X_t_prev)
   
   # Ensure probabilities are valid
   X_pred <- pmax(X_pred, .Machine$double.eps)  # Avoid zeros

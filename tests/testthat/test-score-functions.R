@@ -90,6 +90,48 @@ test_that("Fisher Information is positive and finite", {
   expect_true(fi > 0)
 })
 
+test_that("Fisher Information depends on off-diagonal transition probs", {
+  # With non-uniform X_t_prev, the transition matrix affects X_pred,
+  # which in turn affects Fisher info. Before the fix, convert_to_valid_probs
+  # misinterpreted off-diagonal probs as diagonal probs (wrong matrix).
+  K <- 2
+  mu <- c(-2, 2)
+  sigma2 <- c(0.5, 0.5)
+  X_t_prev <- c(0.8, 0.2)  # Non-uniform so P actually affects X_pred
+
+  y <- rnorm(500)
+  gh_setup <- setup_gauss_hermite_quadrature(y)
+
+  fi_small <- multiregimeTVTP:::calculate_fisher_information(
+    mu, sigma2, X_t_prev, c(0.05, 0.05), gh_setup, K
+  )
+  fi_large <- multiregimeTVTP:::calculate_fisher_information(
+    mu, sigma2, X_t_prev, c(0.45, 0.45), gh_setup, K
+  )
+
+  # The key assertion: different transition probs produce different Fisher info
+  # (with uniform X_t_prev they'd be equal since P drops out)
+  expect_false(isTRUE(all.equal(fi_small, fi_large)),
+               label = "Fisher Info differs for different transition probs")
+})
+
+test_that("Fisher Information works for K=3 off-diagonal", {
+  K <- 3
+  mu <- c(-2, 0, 2)
+  sigma2 <- c(0.5, 0.5, 0.5)
+  X_t_prev <- c(0.5, 0.3, 0.2)
+  p_trans <- c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1)  # 6 off-diagonal probs
+
+  y <- rnorm(500)
+  gh_setup <- setup_gauss_hermite_quadrature(y)
+
+  fi <- multiregimeTVTP:::calculate_fisher_information(
+    mu, sigma2, X_t_prev, p_trans, gh_setup, K
+  )
+  expect_true(is.finite(fi))
+  expect_true(fi > 0)
+})
+
 test_that("Fisher Information is larger when regimes are well-separated", {
   K <- 2
   sigma2 <- c(0.5, 0.5)
