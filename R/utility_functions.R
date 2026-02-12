@@ -402,49 +402,85 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
   }
   
   # Generate starting points
+  #
+  # Scaling strategy: start 1 uses sensible defaults (no noise). Subsequent
+  # starts add randomisation that widens with n_starts so that investing in
+  # more starts systematically explores a larger region of the parameter space.
+  # The log-scaling formula  base * log(n_starts) / log(7)  equals the base
+  # value when n_starts = 7 and grows slowly beyond that.
+
   starting_points <- vector("list", n_starts)
-  
+
   for (i in 1:n_starts) {
-    
-    # 1. Generate means using quantiles with noise
-    # Use quantiles to spread regimes across data range
+
+    # ---- 1. Means (mu) ----
+    # Quantile anchors spread regimes across the data range.
+    # Start 1: pure anchors (no noise). Subsequent starts add Gaussian noise
+    # whose SD scales with n_starts.
     quantile_positions <- seq(0.1, 0.9, length.out = K)
     base_means <- quantile(y_clean, probs = quantile_positions)
-    
-    # Add random noise (±0.5 standard deviations)
-    noise_scale <- 0.5 * y_sd
-    mu_start <- base_means + runif(K, -noise_scale, noise_scale)
-    
-    # 2. Generate variances based on equal_variances setting
-    if (equal_variances) {
-      # Single shared variance parameter
-      var_fraction <- runif(1, 0.5, 1.5)  # 50% to 150% of data variance
-      sigma2_start <- var_fraction * y_var
+
+    if (i == 1 || n_starts == 1) {
+      mu_start <- as.numeric(base_means)
     } else {
-      # Separate variance for each regime
-      var_fractions <- runif(K, 0.3, 1.5)  # 30% to 150% of data variance
-      sigma2_start <- var_fractions * y_var
+      noise_sd <- 0.5 * y_sd * log(n_starts) / log(7)
+      mu_start <- as.numeric(base_means) + rnorm(K, mean = 0, sd = noise_sd)
     }
-    
-    # 3. Generate transition probabilities based on parameterization
+
+    # ---- 2. Variances (sigma2) ----
+    # Sampled on the log scale so that the spread is multiplicative.
+    # Start 1: data variance for every regime. Subsequent starts draw
+    # log(sigma2) ~ Normal(log(y_var), log_sd) with log_sd scaling.
+    n_sigma2 <- if (equal_variances) 1 else K
+
+    if (i == 1 || n_starts == 1) {
+      sigma2_start <- rep(y_var, n_sigma2)
+    } else {
+      log_sd <- 0.5 * log(n_starts) / log(7)
+      sigma2_start <- exp(rnorm(n_sigma2, mean = log(y_var), sd = log_sd))
+    }
+
+    # ---- 3. Transition probabilities ----
     if (diag_probs) {
-      # Generate diagonal persistence probabilities
-      # Higher values (0.5-0.95) for persistence, with some variation
-      trans_prob_start <- runif(K, 0.5, 0.95)
-      
+      # Diagonal parameterisation: probabilities in (0, 1).
+      # Start 1: 0.8 (sensible persistent default). Subsequent starts use
+      # Beta distribution centered at 0.8 whose concentration decreases
+      # (i.e. spread increases) with n_starts.
+      if (i == 1 || n_starts == 1) {
+        trans_prob_start <- rep(0.8, K)
+      } else {
+        concentration <- 7 * log(7) / log(n_starts)
+        a_beta <- concentration * 0.8
+        b_beta <- concentration * 0.2
+        trans_prob_start <- rbeta(K, shape1 = a_beta, shape2 = b_beta)
+        # Clamp to avoid extreme values that cause numerical issues
+        trans_prob_start <- pmin(pmax(trans_prob_start, 0.01), 0.99)
+      }
+
     } else {
-      # Generate off-diagonal transition probabilities
-      # Small values ensure row sums don't exceed 1 (diagonal stays positive)
-      # For K regimes, each row has K-1 off-diagonal entries that must sum to < 1
+      # Off-diagonal logit parameterisation: probabilities in (0, 1).
+      # Small values ensure row sums don't exceed 1 (diagonal stays positive).
+      # Start 1: sensible default (0.1). Subsequent starts use Beta distribution
+      # centered at 0.15 whose concentration decreases with n_starts.
       max_per_entry <- 0.9 / (K - 1)  # Leave at least 10% for diagonal
-      trans_prob_start <- runif(n_transition, 0.01, min(0.3, max_per_entry))
+      if (i == 1 || n_starts == 1) {
+        trans_prob_start <- rep(0.1, n_transition)
+      } else {
+        center <- min(0.15, max_per_entry * 0.5)
+        concentration <- 7 * log(7) / log(n_starts)
+        a_beta <- concentration * center
+        b_beta <- concentration * (1 - center)
+        trans_prob_start <- rbeta(n_transition, shape1 = a_beta, shape2 = b_beta)
+        # Clamp to valid range
+        trans_prob_start <- pmin(pmax(trans_prob_start, 0.01), min(0.3, max_per_entry))
+      }
     }
-    
-    # 4. Build parameter vector based on model type
+
+    # ---- 4. Build parameter vector by model type ----
     if (model_type == "constant") {
       # Constant model: [mu, sigma2, trans_prob]
       param_vector <- c(mu_start, sigma2_start, trans_prob_start)
-      
+
     } else if (model_type %in% c("tvp", "exogenous")) {
       # TVP/Exogenous models: [mu, sigma2, trans_prob, A]
       # A coefficients are unbounded. First starting point is 0 (matching original),
@@ -460,16 +496,24 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
 
     } else if (model_type == "gas") {
       # GAS model: [mu, sigma2, trans_prob, A, B]
-      # A coefficients are unbounded. First starting point is 0 (matching original),
-      # subsequent points use normal distribution with log-scaled SD for exploration
+      # A coefficients: same log-scaled strategy as TVP
       if (i == 1 || n_starts == 1) {
         A_start <- rep(0, n_transition)
       } else {
-        # SD scales logarithmically: SD=1 when n_starts=7
         sd_A <- log(n_starts) / log(7)
         A_start <- rnorm(n_transition, mean = 0, sd = sd_A)
       }
-      B_start <- runif(n_transition, 0.5, 0.99) # High persistence
+      # B coefficients (persistence): Beta distribution mirroring diagonal
+      # transition probs, centered at 0.8.
+      if (i == 1 || n_starts == 1) {
+        B_start <- rep(0.8, n_transition)
+      } else {
+        concentration <- 7 * log(7) / log(n_starts)
+        a_beta <- concentration * 0.8
+        b_beta <- concentration * 0.2
+        B_start <- rbeta(n_transition, shape1 = a_beta, shape2 = b_beta)
+        B_start <- pmin(pmax(B_start, 0.01), 0.99)
+      }
       param_vector <- c(mu_start, sigma2_start, trans_prob_start, A_start, B_start)
     }
     
