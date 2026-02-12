@@ -433,9 +433,11 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       trans_prob_start <- runif(K, 0.5, 0.95)
       
     } else {
-      # Generate unconstrained softmax parameters for off-diagonal transitions
-      # x=0 gives equal probs (1/K for all entries); small perturbations give variation
-      trans_prob_start <- rnorm(n_transition, mean = 0, sd = 0.3)
+      # Generate off-diagonal transition probabilities
+      # Small values ensure row sums don't exceed 1 (diagonal stays positive)
+      # For K regimes, each row has K-1 off-diagonal entries that must sum to < 1
+      max_per_entry <- 0.9 / (K - 1)  # Leave at least 10% for diagonal
+      trans_prob_start <- runif(n_transition, 0.01, min(0.3, max_per_entry))
     }
     
     # 4. Build parameter vector based on model type
@@ -500,7 +502,7 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
       if (diag_probs) {
         trans_prob_fallback <- rep(0.8, K)  # High persistence
       } else {
-        trans_prob_fallback <- rep(0, n_transition)  # Equal probs (softmax params)
+        trans_prob_fallback <- rep(0.1, n_transition)  # Small off-diagonal probs
       }
       
       if (model_type == "constant") {

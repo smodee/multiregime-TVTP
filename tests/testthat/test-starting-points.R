@@ -1,4 +1,4 @@
-# Tests for generate_starting_points with softmax parameters
+# Tests for generate_starting_points with off-diagonal parameters
 
 test_that("starting points have correct count for off-diagonal K=2", {
   set.seed(42)
@@ -23,11 +23,16 @@ test_that("off-diagonal starting points produce valid transition matrices", {
     sp_attr <- set_parameter_attributes(sp, K = 3, model_type = "constant",
                                         diag_probs = FALSE, equal_variances = TRUE)
     trans_prob <- extract_parameter_component(sp_attr, "trans_prob")
+
+    # Off-diagonal probs should be in (0,1)
+    expect_true(all(trans_prob > 0 & trans_prob < 1),
+                label = sprintf("trial %d probs in (0,1)", i))
+
     P <- transition_matrix(trans_prob, diag_probs = FALSE)
 
     expect_equal(rowSums(P), rep(1, 3), tolerance = 1e-10,
                  label = sprintf("trial %d row sums", i))
-    expect_true(all(P > 0), label = sprintf("trial %d positive", i))
+    expect_true(all(P >= 0), label = sprintf("trial %d non-negative", i))
   }
 })
 

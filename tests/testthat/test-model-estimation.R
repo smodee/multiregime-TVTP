@@ -30,8 +30,8 @@ test_that("constant model estimation still works with diagonal parameterization"
 
 test_that("dataTVPCD generates valid data with off-diagonal params", {
   set.seed(42)
-  # mu1, mu2, sigma2, x12, x21, A1, A2
-  par <- c(-1, 1, 0.5, -0.5, 0.3, 0.05, -0.05)
+  # mu1, mu2, sigma2, p12, p21, A1, A2
+  par <- c(-1, 1, 0.5, 0.2, 0.15, 0.05, -0.05)
   par <- set_parameter_attributes(par, K = 2, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
@@ -58,8 +58,8 @@ test_that("dataTVPCD generates valid data with diagonal params", {
 
 test_that("dataTVPXExoCD generates valid data with off-diagonal params", {
   set.seed(42)
-  # mu1, mu2, sigma2, x12, x21, A1, A2
-  par <- c(-1, 1, 0.5, -0.3, 0.2, 0.1, -0.1)
+  # mu1, mu2, sigma2, p12, p21, A1, A2
+  par <- c(-1, 1, 0.5, 0.2, 0.15, 0.1, -0.1)
   par <- set_parameter_attributes(par, K = 2, model_type = "exogenous",
                                   diag_probs = FALSE, equal_variances = TRUE)
   X_Exo <- rnorm(1200)
@@ -73,8 +73,8 @@ test_that("dataTVPXExoCD generates valid data with off-diagonal params", {
 
 test_that("dataGASCD generates valid data with off-diagonal params", {
   set.seed(42)
-  # mu1, mu2, sigma2_1, sigma2_2, x12, x21, A1, A2, B1, B2
-  par <- c(-1, 1, 0.5, 0.8, -0.3, 0.2, 0.05, -0.05, 0.5, 0.6)
+  # mu1, mu2, sigma2_1, sigma2_2, p12, p21, A1, A2, B1, B2
+  par <- c(-1, 1, 0.5, 0.8, 0.2, 0.15, 0.05, -0.05, 0.5, 0.6)
   par <- set_parameter_attributes(par, K = 2, model_type = "gas",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
@@ -91,7 +91,7 @@ test_that("Rfiltering_TVP returns finite likelihood with off-diagonal params", {
   set.seed(42)
   y <- c(rnorm(200, -1, sqrt(0.5)), rnorm(200, 1, sqrt(0.5)))
 
-  par <- c(-1, 1, 0.5, -0.3, 0.2, 0.05, -0.05)
+  par <- c(-1, 1, 0.5, 0.2, 0.15, 0.05, -0.05)
   par <- set_parameter_attributes(par, K = 2, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
@@ -105,7 +105,7 @@ test_that("Rfiltering_TVPXExo returns finite likelihood with off-diagonal params
   y <- c(rnorm(200, -1, sqrt(0.5)), rnorm(200, 1, sqrt(0.5)))
   X_Exo <- rnorm(400)
 
-  par <- c(-1, 1, 0.5, -0.3, 0.2, 0.1, -0.1)
+  par <- c(-1, 1, 0.5, 0.2, 0.15, 0.1, -0.1)
   par <- set_parameter_attributes(par, K = 2, model_type = "exogenous",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
@@ -119,7 +119,7 @@ test_that("Rfiltering_GAS returns finite likelihood with off-diagonal params", {
   y <- c(rnorm(200, -1, sqrt(0.5)), rnorm(200, 1, sqrt(0.8)))
 
   # Need separate variances for GAS to set up quadrature properly
-  par <- c(-1, 1, 0.5, 0.8, -0.3, 0.2, 0.05, -0.05, 0.5, 0.6)
+  par <- c(-1, 1, 0.5, 0.8, 0.2, 0.15, 0.05, -0.05, 0.5, 0.6)
   par <- set_parameter_attributes(par, K = 2, model_type = "gas",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
@@ -132,7 +132,7 @@ test_that("Rfiltering_Const returns finite likelihood with off-diagonal params",
   set.seed(42)
   y <- c(rnorm(200, -1, sqrt(0.5)), rnorm(200, 1, sqrt(0.5)))
 
-  par <- c(-1, 1, 0.5, -0.3, 0.2)
+  par <- c(-1, 1, 0.5, 0.2, 0.15)
   par <- set_parameter_attributes(par, K = 2, model_type = "constant",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
@@ -157,8 +157,8 @@ test_that("Rfiltering_Const works with K=3 off-diagonal", {
   set.seed(42)
   y <- c(rnorm(100, -2, 0.5), rnorm(100, 0, 0.5), rnorm(100, 2, 0.5))
 
-  # K=3: mu1, mu2, mu3, sigma2, x12, x13, x21, x23, x31, x32
-  par <- c(-2, 0, 2, 0.5, -1, -1, -1, -1, -1, -1)
+  # K=3: mu1, mu2, mu3, sigma2, p12, p13, p21, p23, p31, p32
+  par <- c(-2, 0, 2, 0.5, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1)
   par <- set_parameter_attributes(par, K = 3, model_type = "constant",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
