@@ -559,6 +559,7 @@ describe("GAS fallback edge cases", {
 # =============================================================================
 
 describe("GAS fallback integration with estimate_gas_model", {
+  skip_on_cran()
 
   it("estimate_gas_model records fallback settings in output", {
     set.seed(999)
@@ -621,6 +622,7 @@ describe("GAS fallback integration with estimate_gas_model", {
 # two DIFFERENT code paths: full GAS filtering vs constant model filtering.
 
 describe("Full GAS vs constant fallback accuracy with near-zero A", {
+  skip_on_cran()
 
   # NOTE: The full GAS path and constant fallback use DIFFERENT initialization.
   # The GAS model computes initial predicted probabilities via logistic(logit(.))
@@ -845,6 +847,7 @@ describe("Full GAS vs constant fallback accuracy with near-zero A", {
 # regimes.
 
 describe("Fallback performance advantage over full GAS", {
+  skip_on_cran()
 
   B_burnin <- 20
   C_cutoff <- 0
@@ -1502,6 +1505,7 @@ describe("Likelihood surface continuity at A_threshold boundary", {
 # keep runtime short.
 
 describe("Round-trip estimation consistency", {
+  skip_on_cran()
 
   it("recovers constant model parameters via GAS estimation (K=2 diagonal)", {
     set.seed(1201)
@@ -1594,6 +1598,7 @@ describe("Round-trip estimation consistency", {
 # stability and faster estimation. Uses minimal settings for speed.
 
 describe("Estimation accuracy and speed: fallback vs no-fallback", {
+  skip_on_cran()
 
   it("fallback and non-fallback achieve comparable NLL for K=2", {
     set.seed(1301)
