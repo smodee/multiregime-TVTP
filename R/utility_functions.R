@@ -546,3 +546,118 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
   
   return(starting_points)
 }
+
+
+# --- Early Stopping Utilities for Multi-Start Optimization ---
+
+#' Create early stopping configuration
+#'
+#' Builds a configuration list for the early stopping mechanism used during
+#' multi-start optimization. Internal function, not exported.
+#'
+#' @param enabled Logical; whether early stopping is active.
+#' @param patience Integer; number of evaluations without improvement before
+#'   stopping. Default 500.
+#' @param rel_tol Numeric; minimum relative improvement to count as progress.
+#'   Default 1e-8.
+#' @param max_objective Numeric; objective values above this trigger immediate
+#'   stopping. Default 1e10.
+#' @param max_evals Integer; maximum total evaluations per start. Default 50000.
+#' @return A list with the configuration values.
+#' @keywords internal
+create_early_stop_config <- function(enabled = FALSE,
+                                     patience = 500L,
+                                     rel_tol = 1e-8,
+                                     max_objective = 1e10,
+                                     max_evals = 50000L) {
+  list(
+    enabled = enabled,
+    patience = as.integer(patience),
+    rel_tol = rel_tol,
+    max_objective = max_objective,
+    max_evals = as.integer(max_evals)
+  )
+}
+
+#' Wrap an objective function with early stopping tracking
+#'
+#' Creates a closure around the base objective function that monitors evaluation
+#' history and returns a large penalty value when divergence is detected.
+#' The tracker environment is mutable and shared between the wrapper and caller.
+#'
+#' @param base_objective_fn The original objective function (takes a parameter
+#'   vector, returns a scalar).
+#' @param early_stop_config Configuration list from
+#'   \code{create_early_stop_config}.
+#' @return A list with two elements:
+#'   \describe{
+#'     \item{objective}{The wrapped objective function.}
+#'     \item{tracker}{An environment with fields: \code{eval_count},
+#'       \code{best_value}, \code{evals_since_improvement},
+#'       \code{early_stopped}, \code{stop_reason}.}
+#'   }
+#' @keywords internal
+create_early_stop_objective <- function(base_objective_fn, early_stop_config) {
+  tracker <- new.env(parent = emptyenv())
+  tracker$eval_count <- 0L
+  tracker$best_value <- Inf
+  tracker$evals_since_improvement <- 0L
+  tracker$early_stopped <- FALSE
+  tracker$stop_reason <- ""
+
+  objective_fn <- function(par_t) {
+    # If already stopped, return penalty immediately
+    if (tracker$early_stopped) {
+      return(1e20)
+    }
+
+    tracker$eval_count <- tracker$eval_count + 1L
+
+    # Call the real objective
+    value <- base_objective_fn(par_t)
+
+    # Non-finite values get penalty (existing behavior, now tracked)
+    if (!is.finite(value)) {
+      return(1e20)
+    }
+
+    # Criterion: explosion
+    if (value > early_stop_config$max_objective) {
+      tracker$early_stopped <- TRUE
+      tracker$stop_reason <- "objective_explosion"
+      return(1e20)
+    }
+
+    # Criterion: stagnation
+    if (is.infinite(tracker$best_value)) {
+      # First finite evaluation always counts as improvement
+      improvement <- 1
+    } else {
+      improvement <- (tracker$best_value - value) /
+        (abs(tracker$best_value) + 1e-10)
+    }
+    if (improvement > early_stop_config$rel_tol) {
+      tracker$best_value <- value
+      tracker$evals_since_improvement <- 0L
+    } else {
+      tracker$evals_since_improvement <- tracker$evals_since_improvement + 1L
+    }
+
+    if (tracker$evals_since_improvement > early_stop_config$patience) {
+      tracker$early_stopped <- TRUE
+      tracker$stop_reason <- "stagnation"
+      return(1e20)
+    }
+
+    # Criterion: budget exceeded
+    if (tracker$eval_count > early_stop_config$max_evals) {
+      tracker$early_stopped <- TRUE
+      tracker$stop_reason <- "max_evals_exceeded"
+      return(1e20)
+    }
+
+    return(value)
+  }
+
+  list(objective = objective_fn, tracker = tracker)
+}

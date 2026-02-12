@@ -17,6 +17,9 @@ estimate_gas_model(
   scaling_method = NULL,
   use_fallback = TRUE,
   A_threshold = 1e-04,
+  early_stopping = FALSE,
+  early_stop_patience = 500L,
+  early_stop_max_evals = 50000L,
   parallel = TRUE,
   cores = NULL,
   seed = NULL,
@@ -47,6 +50,12 @@ estimate_gas_model(
 \item{use_fallback}{Whether to automatically use constant model fallback when A is small (default: TRUE)}
 
 \item{A_threshold}{Threshold below which to use constant model fallback (default: 1e-4)}
+
+\item{early_stopping}{Enable early stopping for diverging starts (default: FALSE)}
+
+\item{early_stop_patience}{Evaluations without improvement before stopping (default: 500)}
+
+\item{early_stop_max_evals}{Maximum evaluations per start (default: 50000)}
 
 \item{parallel}{Enable parallel processing for multiple starts (default: TRUE)}
 

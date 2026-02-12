@@ -358,6 +358,9 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' @param B Burn-in observations to exclude (default: 100)
 #' @param C Cut-off observations to exclude (default: 50)
 #' @param bounds Optional list with lower and upper parameter bounds
+#' @param early_stopping Enable early stopping for diverging starts (default: FALSE)
+#' @param early_stop_patience Evaluations without improvement before stopping (default: 500)
+#' @param early_stop_max_evals Maximum evaluations per start (default: 50000)
 #' @param parallel Enable parallel processing for multiple starts (default: TRUE)
 #' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
 #' @param seed Random seed for reproducibility (optional)
@@ -383,6 +386,9 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' @export
 estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,
+                               early_stopping = FALSE,
+                               early_stop_patience = 500L,
+                               early_stop_max_evals = 50000L,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
   # Input validation
@@ -412,6 +418,13 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
     future::plan(future::sequential)
   }
   
+  # Build early stopping configuration
+  early_stop_config <- create_early_stop_config(
+    enabled = early_stopping,
+    patience = early_stop_patience,
+    max_evals = early_stop_max_evals
+  )
+
   if (verbose >= 1) {
     cat("Estimating exogenous regime-switching model\n")
     cat("==========================================\n")
@@ -421,6 +434,10 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
     cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
     cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
     cat("Starting points:", n_starts, "\n")
+    if (early_stopping) {
+      cat("Early stopping: enabled (patience=", early_stop_patience,
+          ", max_evals=", early_stop_max_evals, ")\n")
+    }
     if (parallel) cat("Parallel processing:", cores, "cores\n")
     cat("\n")
   }
@@ -464,53 +481,70 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
   # Define the optimization function for a single start
   optimize_single_start <- function(start_idx) {
     start_params <- starting_points[[start_idx]]
-    
+
     if (verbose >= 2 && !parallel) {
       cat("  Starting point", start_idx, "of", n_starts, "\n")
     }
-    
+
     tryCatch({
       # Transform parameters to unconstrained space for optimization
       transformed_params <- transform_parameters(start_params)
-      
+
+      # Define the base objective function
+      base_objective <- function(par_t) {
+        par_t_with_attrs <- transformed_params
+        par_t_with_attrs[] <- par_t
+        attr(par_t_with_attrs, "parameterization") <- "transformed"
+        par_natural <- untransform_parameters(par_t_with_attrs)
+        neg_log_lik <- Rfiltering_TVPXExo(par_natural, X_Exo, y, B, C, diagnostics = FALSE)
+        return(neg_log_lik)
+      }
+
+      # Wrap with early stopping if enabled
+      if (early_stop_config$enabled) {
+        es <- create_early_stop_objective(base_objective, early_stop_config)
+        objective_fn <- es$objective
+        es_tracker <- es$tracker
+      } else {
+        objective_fn <- base_objective
+        es_tracker <- NULL
+      }
+
       # Run optimization
       trace_setting <- if (verbose >= 2) 1 else 0
       optimization_result <- nlminb(
         start = transformed_params,
-        objective = function(par_t) {
-          # Transform parameters back to natural space with proper attributes
-          par_t_with_attrs <- transformed_params  # Copy attributes from start
-          par_t_with_attrs[] <- par_t  # Update values
-          attr(par_t_with_attrs, "parameterization") <- "transformed"
-          
-          par_natural <- untransform_parameters(par_t_with_attrs)
-          
-          # Calculate negative log-likelihood (no diagnostics for speed)
-          neg_log_lik <- Rfiltering_TVPXExo(par_natural, X_Exo, y, B, C, diagnostics = FALSE)
-          return(neg_log_lik)
-        },
+        objective = objective_fn,
         lower = bounds$lower,
         upper = bounds$upper,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
       )
-      
+
       # Transform final parameters back to natural space
       final_par_t <- transformed_params  # Copy attributes
       final_par_t[] <- optimization_result$par  # Update values
       attr(final_par_t, "parameterization") <- "transformed"
-      
+
       estimated_params <- untransform_parameters(final_par_t)
-      
+
       # Store the final parameters in the optimization result
       optimization_result$final_par <- estimated_params
-      
+
+      # Check early stopping status
+      early_stopped <- if (!is.null(es_tracker)) es_tracker$early_stopped else FALSE
+      stop_reason <- if (!is.null(es_tracker)) es_tracker$stop_reason else ""
+      eval_count <- if (!is.null(es_tracker)) es_tracker$eval_count else NA_integer_
+
       # Return result with metadata
       list(
         result = optimization_result,
         start_idx = start_idx,
         convergence = optimization_result$convergence,
-        objective = optimization_result$objective,
-        start_params = start_params
+        objective = if (early_stopped) Inf else optimization_result$objective,
+        start_params = start_params,
+        early_stopped = early_stopped,
+        stop_reason = stop_reason,
+        eval_count = eval_count
       )
     }, error = function(e) {
       # Return error information
@@ -520,7 +554,10 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
         convergence = 999,  # Error code
         objective = Inf,
         error = e$message,
-        start_params = start_params
+        start_params = start_params,
+        early_stopped = FALSE,
+        stop_reason = "error",
+        eval_count = NA_integer_
       )
     })
   }
@@ -559,22 +596,33 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
   convergence_codes <- sapply(results, function(x) x$convergence)
   n_converged <- sum(convergence_codes == 0)
   n_failed <- sum(convergence_codes == 999)
-  
+  n_early_stopped <- sum(sapply(results, function(x) isTRUE(x$early_stopped)))
+
   if (verbose >= 1 && n_starts > 1) {
     cat("Best result from starting point", best_result$start_idx, "\n")
-    cat("Convergence summary:", n_converged, "converged,", 
-        n_starts - n_converged - n_failed, "non-convergent,", n_failed, "failed\n")
+    cat("Convergence summary:", n_converged, "converged,",
+        n_starts - n_converged - n_failed - n_early_stopped, "non-convergent,",
+        n_early_stopped, "early-stopped,",
+        n_failed, "failed\n")
     cat("Best negative log-likelihood:", sprintf("%.6f", best_result$objective), "\n")
+
+    if (verbose >= 2 && n_early_stopped > 0) {
+      es_results <- results[sapply(results, function(x) isTRUE(x$early_stopped))]
+      for (r in es_results) {
+        cat("  Start", r$start_idx, "early-stopped:", r$stop_reason,
+            "after", r$eval_count, "evaluations\n")
+      }
+    }
   }
-  
+
   # Extract the best optimization result
   optimization_result <- best_result$result
   estimated_params <- optimization_result$final_par
-  
+
   # Calculate model diagnostics
   num_params <- length(estimated_params)
   num_data_points <- length(y) - B - C
-  
+
   aic <- 2 * optimization_result$objective + 2 * num_params
   bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
@@ -600,7 +648,9 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
       convergence_code = optimization_result$convergence,
       n_starts = n_starts,
       n_converged = n_converged,
-      n_failed = n_failed
+      n_early_stopped = n_early_stopped,
+      n_failed = n_failed,
+      early_stopping_enabled = early_stopping
     ),
     model_info = list(
       K = K,
