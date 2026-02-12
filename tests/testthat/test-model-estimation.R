@@ -1,4 +1,5 @@
 # End-to-end model estimation tests
+skip_on_cran()
 
 # --- Constant model ---
 
