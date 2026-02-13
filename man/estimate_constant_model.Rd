@@ -13,6 +13,9 @@ estimate_constant_model(
   B = 100,
   C = 50,
   bounds = NULL,
+  early_stopping = FALSE,
+  early_stop_patience = 500L,
+  early_stop_max_evals = 50000L,
   parallel = TRUE,
   cores = NULL,
   seed = NULL,
@@ -35,6 +38,12 @@ estimate_constant_model(
 \item{C}{Cut-off observations to exclude (default: 50)}
 
 \item{bounds}{Optional list with lower and upper parameter bounds}
+
+\item{early_stopping}{Enable early stopping for diverging starts (default: FALSE)}
+
+\item{early_stop_patience}{Evaluations without improvement before stopping (default: 500)}
+
+\item{early_stop_max_evals}{Maximum evaluations per start (default: 50000)}
 
 \item{parallel}{Enable parallel processing for multiple starts (default: TRUE)}
 
