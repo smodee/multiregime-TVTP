@@ -93,9 +93,9 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     f_to_params <- logistic
     f_to_params_loop <- logistic_clamped
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
-    f_to_params_loop <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
+    f_to_params_loop <- logistic_clamped
   }
   omega <- params_to_f(init_trans)
 
@@ -392,9 +392,9 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
     f_to_params <- logistic
     f_to_params_loop <- logistic_clamped
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
-    f_to_params_loop <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
+    f_to_params_loop <- logistic_clamped
   }
   omega <- params_to_f(init_trans)
   omega_LR <- omega  # They are the same for GAS

@@ -67,8 +67,8 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
     params_to_f <- logit
     f_to_params <- logistic
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
   }
   omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
@@ -225,8 +225,8 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
     params_to_f <- logit
     f_to_params <- logistic
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
   }
   omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
