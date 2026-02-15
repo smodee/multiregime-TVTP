@@ -358,9 +358,9 @@ estimate_constant_model <- function(y, K, diag_probs = TRUE, equal_variances = F
     expected_length <- calculate_expected_length(K, "constant", diag_probs, equal_variances)
     
     # Create default bounds for transformed parameters
-    lower_bounds <- c(rep(-Inf, K),                 # No bounds on means
-                      rep(-Inf, ifelse(equal_variances, 1, K)),  # Log-variances
-                      rep(-Inf, ifelse(diag_probs, K, K*(K-1))))  # Logit-probabilities
+    lower_bounds <- c(rep(-Inf, K),                          # No bounds on means
+                      rep(log(1e-10), ifelse(equal_variances, 1, K)),  # Log-variances: floor at sigma2=1e-10
+                      rep(-Inf, ifelse(diag_probs, K, K*(K-1))))       # Logit-probabilities
     
     upper_bounds <- c(rep(Inf, K),                  # No bounds on means  
                       rep(Inf, ifelse(equal_variances, 1, K)),   # Log-variances

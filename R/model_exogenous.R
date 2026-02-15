@@ -465,10 +465,10 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
     n_trans <- ifelse(diag_probs, K, K*(K-1))
     n_A <- n_trans  # A coefficients match transition structure
     
-    lower_bounds <- c(rep(-Inf, n_mu),      # No bounds on means
-                      rep(-Inf, n_sigma2),  # Log-variances
-                      rep(-Inf, n_trans),   # Logit-probabilities  
-                      rep(-Inf, n_A))       # Logit-A coefficients
+    lower_bounds <- c(rep(-Inf, n_mu),           # No bounds on means
+                      rep(log(1e-10), n_sigma2), # Log-variances: floor at sigma2=1e-10
+                      rep(-Inf, n_trans),        # Logit-probabilities
+                      rep(-Inf, n_A))            # Logit-A coefficients
     
     upper_bounds <- c(rep(Inf, n_mu),       # No bounds on means
                       rep(Inf, n_sigma2),   # Log-variances

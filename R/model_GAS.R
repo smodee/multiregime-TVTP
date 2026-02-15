@@ -712,11 +712,11 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
     n_A <- n_trans  # A coefficients match transition structure
     n_B <- n_trans  # B coefficients match transition structure
     
-    lower_bounds <- c(rep(-Inf, n_mu),      # No bounds on means
-                      rep(-Inf, n_sigma2),  # Log-variances
-                      rep(-Inf, n_trans),   # Logit-probabilities  
-                      rep(-Inf, n_A),       # Logit-A coefficients
-                      rep(-Inf, n_B))       # Logit-B coefficients
+    lower_bounds <- c(rep(-Inf, n_mu),           # No bounds on means
+                      rep(log(1e-10), n_sigma2), # Log-variances: floor at sigma2=1e-10
+                      rep(-Inf, n_trans),        # Logit-probabilities
+                      rep(-Inf, n_A),            # Logit-A coefficients
+                      rep(-Inf, n_B))            # Logit-B coefficients
     
     upper_bounds <- c(rep(Inf, n_mu),       # No bounds on means
                       rep(Inf, n_sigma2),   # Log-variances
@@ -764,13 +764,13 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
 
       # Run optimization
       trace_setting <- if (verbose >= 2) 1 else 0
-      optimization_result <- nlminb(
+      optimization_result <- suppressWarnings(nlminb(
         start = transformed_params,
         objective = objective_fn,
         lower = bounds$lower,
         upper = bounds$upper,
         control = list(eval.max = 1e6, iter.max = 1e6, trace = trace_setting)
-      )
+      ))
 
       # Transform final parameters back to natural space
       final_par_t <- transformed_params  # Copy attributes
