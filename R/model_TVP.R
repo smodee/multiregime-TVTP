@@ -67,8 +67,8 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
     params_to_f <- logit
     f_to_params <- logistic
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
   }
   omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)
@@ -221,8 +221,8 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
     params_to_f <- logit
     f_to_params <- logistic
   } else {
-    params_to_f <- identity
-    f_to_params <- identity
+    params_to_f <- logit
+    f_to_params <- logistic
   }
   omega_LR <- params_to_f(init_trans)
   omega <- omega_LR * (1 - A)  # This scaling ensures that when A=0, we get back to init_trans
