@@ -149,8 +149,8 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 #' @param par Parameter vector with attributes (mu, sigma2, init_trans, A)
 #' @param X_Exo Exogenous process that drives transition probability changes
 #' @param y Observed time series increments
-#' @param B Burn-in to be excluded at the beginning of the time series
-#' @param C Cut-off to be excluded at the end of the time series
+#' @param n_burnin Burn-in to be excluded at the beginning of the time series
+#' @param n_cutoff Cut-off to be excluded at the end of the time series
 #' @param diagnostics If TRUE, include detailed diagnostic information (default: TRUE)
 #' @return Negative log-likelihood of observed data under the model
 #' @details
@@ -170,9 +170,9 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 #'                                      diag_probs=TRUE, equal_variances=FALSE)
 #' X_Exo <- rnorm(200)
 #' y <- rnorm(200)
-#' loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 20, 10)
+#' loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, n_burnin=20, n_cutoff=10)
 #' @export
-Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
+Rfiltering_TVPXExo <- function(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE) {
 
   # Only validate if diagnostics are enabled (performance optimization)
   if (diagnostics) {
@@ -312,7 +312,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   }
   
   # Sum log-likelihoods, but exclude burn-in and cut-off
-  valid_indices <- (B+1):(M-C)
+  valid_indices <- (n_burnin+1):(M-n_cutoff)
   if (length(valid_indices) <= 0) {
     stop("Error: No valid data points after applying burn-in and cut-off.")
   }
@@ -355,8 +355,8 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' @param diag_probs If TRUE, use diagonal transition probability parameterization
 #' @param equal_variances If TRUE, constrain all regimes to have equal variances
 #' @param n_starts Number of random starting points for optimization (default: 10)
-#' @param B Burn-in observations to exclude (default: 100)
-#' @param C Cut-off observations to exclude (default: 50)
+#' @param n_burnin Burn-in observations to exclude (default: 100)
+#' @param n_cutoff Cut-off observations to exclude (default: 50)
 #' @param bounds Optional list with lower and upper parameter bounds
 #' @param early_stopping Enable early stopping for diverging starts (default: FALSE)
 #' @param early_stop_patience Evaluations without improvement before stopping
@@ -378,15 +378,15 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' y <- rnorm(200)
 #' X_Exo <- rnorm(200)
 #' result_diag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=TRUE, n_starts=3,
-#'                                   B=20, C=10)
+#'                                   n_burnin=20, n_cutoff=10)
 #'
 #' # Estimate model with off-diagonal probabilities
 #' result_offdiag <- estimate_exo_model(y, X_Exo, K=2, diag_probs=FALSE, n_starts=3,
-#'                                      B=20, C=10)
+#'                                      n_burnin=20, n_cutoff=10)
 #' }
 #' @export
 estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances = FALSE,
-                               n_starts = 10, B = 100, C = 50, bounds = NULL,
+                               n_starts = 10, n_burnin = 100, n_cutoff = 50, bounds = NULL,
                                early_stopping = FALSE,
                                early_stop_patience = 3000L,
                                early_stop_max_evals = 50000L,
@@ -405,7 +405,7 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
   if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
     stop("K must be an integer >= 2")
   }
-  if (length(y) <= B + C + K) {
+  if (length(y) <= n_burnin + n_cutoff + K) {
     stop("Time series too short for specified burn-in and cut-off")
   }
   
@@ -430,7 +430,7 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
     cat("Estimating exogenous regime-switching model\n")
     cat("==========================================\n")
     cat("K:", K, "regimes\n")
-    cat("Data points:", length(y), "(using", length(y) - B - C, "after burn-in/cut-off)\n")
+    cat("Data points:", length(y), "(using", length(y) - n_burnin - n_cutoff, "after burn-in/cut-off)\n")
     cat("Exogenous variable length:", length(X_Exo), "\n")
     cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
     cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
@@ -497,7 +497,7 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
         par_t_with_attrs[] <- par_t
         attr(par_t_with_attrs, "parameterization") <- "transformed"
         par_natural <- untransform_parameters(par_t_with_attrs)
-        neg_log_lik <- Rfiltering_TVPXExo(par_natural, X_Exo, y, B, C, diagnostics = FALSE)
+        neg_log_lik <- Rfiltering_TVPXExo(par_natural, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE)
         return(neg_log_lik)
       }
 
@@ -622,13 +622,13 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
 
   # Calculate model diagnostics
   num_params <- length(estimated_params)
-  num_data_points <- length(y) - B - C
+  num_data_points <- length(y) - n_burnin - n_cutoff
 
   aic <- 2 * optimization_result$objective + 2 * num_params
   bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
   # Calculate filtered probabilities and additional diagnostics (with full diagnostics)
-  full_likelihood_result <- Rfiltering_TVPXExo(estimated_params, X_Exo, y, B, C, diagnostics = TRUE)
+  full_likelihood_result <- Rfiltering_TVPXExo(estimated_params, X_Exo, y, n_burnin, n_cutoff, diagnostics = TRUE)
   
   # Clean up parallel processing
   if (parallel) {
@@ -662,8 +662,8 @@ estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances =
     ),
     data_info = list(
       n_obs = length(y),
-      burn_in = B,
-      cut_off = C,
+      burn_in = n_burnin,
+      cut_off = n_cutoff,
       n_used = num_data_points,
       exo_length = length(X_Exo)
     ),

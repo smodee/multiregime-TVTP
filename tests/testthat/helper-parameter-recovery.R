@@ -15,8 +15,8 @@ RECOVERY_NEAR_ZERO_THRESHOLD <- 0.05
 RECOVERY_NEAR_ZERO_ABS_TOL   <- 0.15
 
 RECOVERY_SIM_BURNIN <- 200L
-RECOVERY_FILTER_B   <- 100L
-RECOVERY_FILTER_C   <- 10L
+RECOVERY_FILTER_BURNIN <- 100L
+RECOVERY_FILTER_CUTOFF <- 10L
 RECOVERY_N_STARTS   <- 10L
 
 # --- Permutation helpers ------------------------------------------------------
@@ -254,25 +254,25 @@ recovery_run_single <- function(scenario, seed = 42L) {
     diag_probs      = scenario$diag_probs,
     equal_variances = scenario$equal_variances,
     n_starts        = RECOVERY_N_STARTS,
-    C               = RECOVERY_FILTER_C,
+    n_cutoff        = RECOVERY_FILTER_CUTOFF,
     parallel        = TRUE,
     seed            = seed + 1000L,
     verbose         = 0L
   )
 
   if (scenario$model_type == "gas") {
-    est_args$B_burnin     <- RECOVERY_FILTER_B
+    est_args$n_burnin     <- RECOVERY_FILTER_BURNIN
     est_args$use_fallback <- FALSE
     est_result <- do.call(estimate_gas_model, est_args)
   } else if (scenario$model_type == "exo") {
-    est_args$B     <- RECOVERY_FILTER_B
-    est_args$X_Exo <- X_Exo_full[1:N]
+    est_args$n_burnin <- RECOVERY_FILTER_BURNIN
+    est_args$X_Exo    <- X_Exo_full[1:N]
     est_result <- do.call(estimate_exo_model, est_args)
   } else if (scenario$model_type == "tvp") {
-    est_args$B <- RECOVERY_FILTER_B
+    est_args$n_burnin <- RECOVERY_FILTER_BURNIN
     est_result <- do.call(estimate_tvp_model, est_args)
   } else {
-    est_args$B <- RECOVERY_FILTER_B
+    est_args$n_burnin <- RECOVERY_FILTER_BURNIN
     est_result <- do.call(estimate_constant_model, est_args)
   }
 

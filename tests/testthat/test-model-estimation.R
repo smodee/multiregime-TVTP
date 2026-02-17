@@ -96,7 +96,7 @@ test_that("Rfiltering_TVP returns finite likelihood with off-diagonal params", {
   par <- set_parameter_attributes(par, K = 2, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
-  nll <- Rfiltering_TVP(par, y, 100, 50)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 100, n_cutoff = 50)
   expect_true(is.finite(nll))
   expect_true(nll > 0)
 })
@@ -110,7 +110,7 @@ test_that("Rfiltering_TVPXExo returns finite likelihood with off-diagonal params
   par <- set_parameter_attributes(par, K = 2, model_type = "exogenous",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
-  nll <- Rfiltering_TVPXExo(par, X_Exo, y, 100, 50)
+  nll <- Rfiltering_TVPXExo(par, X_Exo, y, n_burnin = 100, n_cutoff = 50)
   expect_true(is.finite(nll))
   expect_true(nll > 0)
 })
@@ -124,7 +124,7 @@ test_that("Rfiltering_GAS returns finite likelihood with off-diagonal params", {
   par <- set_parameter_attributes(par, K = 2, model_type = "gas",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_GAS(par, y, 100, 50)
+  nll <- Rfiltering_GAS(par, y, n_burnin = 100, n_cutoff = 50)
   expect_true(is.finite(nll))
   expect_true(nll > 0)
 })
@@ -137,7 +137,7 @@ test_that("Rfiltering_Const returns finite likelihood with off-diagonal params",
   par <- set_parameter_attributes(par, K = 2, model_type = "constant",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
-  nll <- Rfiltering_Const(par, y, 100, 50)
+  nll <- Rfiltering_Const(par, y, n_burnin = 100, n_cutoff = 50)
   expect_true(is.finite(nll))
   expect_true(nll > 0)
 })
@@ -163,7 +163,7 @@ test_that("Rfiltering_Const works with K=3 off-diagonal", {
   par <- set_parameter_attributes(par, K = 3, model_type = "constant",
                                   diag_probs = FALSE, equal_variances = TRUE)
 
-  nll <- Rfiltering_Const(par, y, 100, 50)
+  nll <- Rfiltering_Const(par, y, n_burnin = 100, n_cutoff = 50)
   expect_true(is.finite(nll))
   expect_true(nll > 0)
 })

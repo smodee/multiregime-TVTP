@@ -26,7 +26,7 @@ test_that("constant filter K=3 off-diagonal unequal-var returns finite NLL", {
   par <- set_parameter_attributes(par, K = 3, model_type = "constant",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_Const(par, y, B = 20, C = 10)
+  nll <- Rfiltering_Const(par, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
   expect_true(nll > 0)
 })
@@ -40,7 +40,7 @@ test_that("TVP filter K=3 off-diagonal unequal-var A=0 returns finite NLL", {
   par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
   expect_true(nll > 0)
 })
@@ -55,7 +55,7 @@ test_that("exogenous filter K=3 off-diagonal unequal-var A=0 returns finite NLL"
   par <- set_parameter_attributes(par, K = 3, model_type = "exogenous",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVPXExo(par, X_Exo, y, B = 20, C = 10)
+  nll <- Rfiltering_TVPXExo(par, X_Exo, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
   expect_true(nll > 0)
 })
@@ -69,7 +69,7 @@ test_that("GAS filter K=3 off-diagonal unequal-var A=0 returns finite NLL", {
   par <- set_parameter_attributes(par, K = 3, model_type = "gas",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_GAS(par, y, B_burnin = 20, C = 10,
+  nll <- Rfiltering_GAS(par, y, n_burnin = 20, n_cutoff = 10,
                          use_fallback = FALSE, diagnostics = FALSE)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
   expect_true(nll > 0)
@@ -92,7 +92,7 @@ test_that("TVP filter K=3 off-diagonal with small A=0.05 returns finite NLL", {
   par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("Small A: NLL was:", nll))
   expect_true(nll > 0)
 })
@@ -108,7 +108,7 @@ test_that("TVP filter K=3 off-diagonal with moderate A=0.5 produces degraded NLL
                                   diag_probs = FALSE, equal_variances = FALSE)
 
   # This may or may not be finite depending on data -- document the behavior
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   # Just check we don't crash; the NLL value documents degradation
   expect_true(is.numeric(nll), info = paste("Moderate A: NLL was:", nll))
 })
@@ -123,7 +123,7 @@ test_that("TVP filter K=3 off-diagonal with large A=2.0 returns finite NLL (logi
   par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll),
               info = paste("Large A off-diagonal: NLL was:", nll))
   expect_true(nll > 0)
@@ -140,7 +140,7 @@ test_that("exogenous filter K=3 off-diagonal with large A=2.0 returns finite NLL
 
   # With logistic link, f-values are squashed to (0,1) before constructing
   # transition matrices, so even large A values produce valid probabilities.
-  nll <- Rfiltering_TVPXExo(par, X_Exo, y, B = 20, C = 10)
+  nll <- Rfiltering_TVPXExo(par, X_Exo, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll),
               info = paste("Exo large A off-diagonal: NLL was:", nll))
   expect_true(nll > 0)
@@ -156,7 +156,7 @@ test_that("TVP filter K=3 DIAGONAL with A=2.0 remains finite (logistic protects)
   par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
                                   diag_probs = TRUE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   # Diagonal case with logistic link should produce finite NLL even with large A
   expect_true(is.finite(nll),
               info = paste("Large A diagonal (logistic): NLL was:", nll))
@@ -173,7 +173,7 @@ test_that("GAS filter K=3 off-diagonal with large A=2.0 returns finite NLL (logi
   par <- set_parameter_attributes(par, K = 3, model_type = "gas",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_GAS(par, y, B_burnin = 20, C = 10,
+  nll <- Rfiltering_GAS(par, y, n_burnin = 20, n_cutoff = 10,
                         use_fallback = FALSE, diagnostics = FALSE)
   expect_true(is.finite(nll),
               info = paste("GAS large A off-diagonal: NLL was:", nll))
@@ -254,7 +254,7 @@ test_that("TVP K=3 off-diagonal starting points all produce finite NLL", {
   n_finite <- 0
   for (i in seq_along(sp_list)) {
     nll <- tryCatch(
-      Rfiltering_TVP(sp_list[[i]], y, B = 20, C = 10),
+      Rfiltering_TVP(sp_list[[i]], y, n_burnin = 20, n_cutoff = 10),
       error = function(e) NA_real_
     )
     if (is.finite(nll)) n_finite <- n_finite + 1
@@ -280,7 +280,7 @@ test_that("exogenous K=3 off-diagonal starting points all produce finite NLL", {
   n_error <- 0
   for (i in seq_along(sp_list)) {
     nll <- tryCatch(
-      Rfiltering_TVPXExo(sp_list[[i]], X_Exo, y, B = 20, C = 10),
+      Rfiltering_TVPXExo(sp_list[[i]], X_Exo, y, n_burnin = 20, n_cutoff = 10),
       error = function(e) { n_error <<- n_error + 1; NA_real_ }
     )
     if (!is.na(nll) && is.finite(nll)) n_finite <- n_finite + 1
@@ -304,7 +304,7 @@ test_that("GAS K=3 off-diagonal starting points all produce finite NLL", {
   n_finite <- 0
   for (i in seq_along(sp_list)) {
     nll <- tryCatch(
-      Rfiltering_GAS(sp_list[[i]], y, B_burnin = 20, C = 10,
+      Rfiltering_GAS(sp_list[[i]], y, n_burnin = 20, n_cutoff = 10,
                      use_fallback = FALSE, diagnostics = FALSE),
       error = function(e) NA_real_
     )
@@ -337,7 +337,7 @@ test_that("TVP/exo starting points: negative omega in logit space is safe with l
   n_finite <- 0
   for (i in seq_along(sp_list)) {
     nll <- tryCatch(
-      Rfiltering_TVP(sp_list[[i]], y, B = 20, C = 10),
+      Rfiltering_TVP(sp_list[[i]], y, n_burnin = 20, n_cutoff = 10),
       error = function(e) NA_real_
     )
     if (is.finite(nll)) n_finite <- n_finite + 1
@@ -366,7 +366,7 @@ test_that("constant K=3 off-diagonal single-start converges (control)", {
   start_params <- sp_list[[1]]
   transformed <- transform_parameters(start_params)
 
-  initial_nll <- Rfiltering_Const(start_params, y, B = 20, C = 10)
+  initial_nll <- Rfiltering_Const(start_params, y, n_burnin = 20, n_cutoff = 10)
 
   opt <- nlminb(
     start = transformed,
@@ -375,7 +375,7 @@ test_that("constant K=3 off-diagonal single-start converges (control)", {
       par_t_with_attrs[] <- par_t
       attr(par_t_with_attrs, "parameterization") <- "transformed"
       par_natural <- untransform_parameters(par_t_with_attrs)
-      Rfiltering_Const(par_natural, y, B = 20, C = 10)
+      Rfiltering_Const(par_natural, y, n_burnin = 20, n_cutoff = 10)
     },
     control = list(eval.max = 500, iter.max = 100, trace = 0)
   )
@@ -397,7 +397,7 @@ test_that("TVP K=3 off-diagonal single-start attempts optimization", {
   start_params <- sp_list[[1]]
   transformed <- transform_parameters(start_params)
 
-  initial_nll <- Rfiltering_TVP(start_params, y, B = 20, C = 10)
+  initial_nll <- Rfiltering_TVP(start_params, y, n_burnin = 20, n_cutoff = 10)
 
   opt <- tryCatch(
     nlminb(
@@ -407,7 +407,7 @@ test_that("TVP K=3 off-diagonal single-start attempts optimization", {
         par_t_with_attrs[] <- par_t
         attr(par_t_with_attrs, "parameterization") <- "transformed"
         par_natural <- untransform_parameters(par_t_with_attrs)
-        Rfiltering_TVP(par_natural, y, B = 20, C = 10)
+        Rfiltering_TVP(par_natural, y, n_burnin = 20, n_cutoff = 10)
       },
       control = list(eval.max = 500, iter.max = 100, trace = 0)
     ),
@@ -434,7 +434,7 @@ test_that("exogenous K=3 off-diagonal single-start attempts optimization", {
   start_params <- sp_list[[1]]
   transformed <- transform_parameters(start_params)
 
-  initial_nll <- Rfiltering_TVPXExo(start_params, X_Exo, y, B = 20, C = 10)
+  initial_nll <- Rfiltering_TVPXExo(start_params, X_Exo, y, n_burnin = 20, n_cutoff = 10)
 
   opt <- tryCatch(
     nlminb(
@@ -444,7 +444,7 @@ test_that("exogenous K=3 off-diagonal single-start attempts optimization", {
         par_t_with_attrs[] <- par_t
         attr(par_t_with_attrs, "parameterization") <- "transformed"
         par_natural <- untransform_parameters(par_t_with_attrs)
-        Rfiltering_TVPXExo(par_natural, X_Exo, y, B = 20, C = 10)
+        Rfiltering_TVPXExo(par_natural, X_Exo, y, n_burnin = 20, n_cutoff = 10)
       },
       control = list(eval.max = 500, iter.max = 100, trace = 0)
     ),
@@ -470,7 +470,7 @@ test_that("GAS K=3 off-diagonal single-start attempts optimization", {
   transformed <- transform_parameters(start_params)
 
   initial_nll <- tryCatch(
-    Rfiltering_GAS(start_params, y, B_burnin = 20, C = 10,
+    Rfiltering_GAS(start_params, y, n_burnin = 20, n_cutoff = 10,
                    use_fallback = FALSE, diagnostics = FALSE),
     error = function(e) Inf
   )
@@ -483,7 +483,7 @@ test_that("GAS K=3 off-diagonal single-start attempts optimization", {
         par_t_with_attrs[] <- par_t
         attr(par_t_with_attrs, "parameterization") <- "transformed"
         par_natural <- untransform_parameters(par_t_with_attrs)
-        Rfiltering_GAS(par_natural, y, B_burnin = 20, C = 10,
+        Rfiltering_GAS(par_natural, y, n_burnin = 20, n_cutoff = 10,
                        use_fallback = FALSE, diagnostics = FALSE)
       },
       control = list(eval.max = 500, iter.max = 100, trace = 0)
@@ -511,7 +511,7 @@ test_that("TVP K=2 off-diagonal estimation converges on synthetic data", {
 
   result <- estimate_tvp_model(
     y, K = 2, diag_probs = FALSE, equal_variances = TRUE,
-    n_starts = 5, B = 20, C = 10, verbose = 0, parallel = FALSE
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -528,7 +528,7 @@ test_that("exogenous K=2 off-diagonal estimation converges on synthetic data", {
   # With logistic link, exogenous K=2 off-diagonal should converge
   result <- estimate_exo_model(
     y, X_Exo = X_Exo, K = 2, diag_probs = FALSE, equal_variances = TRUE,
-    n_starts = 5, B = 20, C = 10, verbose = 0, parallel = FALSE
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -543,7 +543,7 @@ test_that("GAS K=2 off-diagonal estimation converges on synthetic data", {
 
   result <- estimate_gas_model(
     y, K = 2, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, B_burnin = 20, C = 10, verbose = 0, parallel = FALSE,
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE,
     use_fallback = TRUE
   )
 
@@ -567,7 +567,7 @@ test_that("TVP K=3 off-diagonal unequal-var estimation converges", {
 
   result <- estimate_tvp_model(
     y, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, B = 20, C = 10, verbose = 0, parallel = FALSE
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -582,7 +582,7 @@ test_that("exogenous K=3 off-diagonal unequal-var estimation converges", {
 
   result <- estimate_exo_model(
     y, X_Exo = X_Exo, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, B = 20, C = 10, verbose = 0, parallel = FALSE
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -596,7 +596,7 @@ test_that("GAS K=3 off-diagonal unequal-var estimation converges", {
 
   result <- estimate_gas_model(
     y, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, B_burnin = 20, C = 10, verbose = 0, parallel = FALSE,
+    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE,
     use_fallback = TRUE
   )
 

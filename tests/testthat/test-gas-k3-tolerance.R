@@ -13,7 +13,7 @@ test_that("GAS model K=3 filtering does not crash with tolerance error", {
   y <- c(rnorm(200, -2), rnorm(200, 0), rnorm(200, 2))
 
   expect_no_error(
-    Rfiltering_GAS(par, y, B_burnin = 5, C = 5, use_fallback = FALSE)
+    Rfiltering_GAS(par, y, n_burnin = 5, n_cutoff = 5, use_fallback = FALSE)
   )
 })
 
@@ -27,7 +27,7 @@ test_that("K=3 filtered probabilities are valid after re-normalization", {
 
   y <- c(rnorm(200, -2), rnorm(200, 0), rnorm(200, 2))
 
-  result <- Rfiltering_GAS(par, y, B_burnin = 5, C = 5,
+  result <- Rfiltering_GAS(par, y, n_burnin = 5, n_cutoff = 5,
                             use_fallback = FALSE, diagnostics = TRUE)
   X_t <- attr(result, "X.t")
 
