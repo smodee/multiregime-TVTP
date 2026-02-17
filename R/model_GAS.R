@@ -232,8 +232,8 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #'
 #' @param par Parameter vector with attributes (mu, sigma2, init_trans, A, B)
 #' @param y Observed time series increments
-#' @param B_burnin Burn-in to be excluded at the beginning of the time series
-#' @param C Cut-off to be excluded at the end of the time series
+#' @param n_burnin Burn-in to be excluded at the beginning of the time series
+#' @param n_cutoff Cut-off to be excluded at the end of the time series
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
 #' @param scaling_method Score scaling method ("moore_penrose", "simple", "normalized", or "factored")
 #' @param use_fallback Whether to automatically use constant model fallback when A is small (default: TRUE)
@@ -261,7 +261,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' y <- rnorm(200)
 #' loglik <- Rfiltering_GAS(par_diag, y, 20, 10)
 #' @export
-Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = NULL,
+Rfiltering_GAS <- function(par, y, n_burnin, n_cutoff, n_nodes = 30, scaling_method = NULL,
                            use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
   
   # Only validate if diagnostics are enabled (performance optimization)
@@ -308,7 +308,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
       )
       
       # Use fast constant model filtering
-      result <- Rfiltering_Const(const_par, y, B_burnin, C, diagnostics = diagnostics)
+      result <- Rfiltering_Const(const_par, y, n_burnin, n_cutoff, diagnostics = diagnostics)
       
       # Add GAS-specific attributes if diagnostics enabled
       if (diagnostics) {
@@ -555,7 +555,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   }
   
   # Sum log-likelihoods, but exclude burn-in and cut-off
-  valid_indices <- (B_burnin+1):(M-C)
+  valid_indices <- (n_burnin+1):(M-n_cutoff)
   if (length(valid_indices) <= 0) {
     stop("Error: No valid data points after applying burn-in and cut-off.")
   }
@@ -607,8 +607,8 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 #' @param diag_probs If TRUE, use diagonal transition probability parameterization
 #' @param equal_variances If TRUE, constrain all regimes to have equal variances
 #' @param n_starts Number of random starting points for optimization (default: 10)
-#' @param B_burnin Burn-in observations to exclude (default: 100)
-#' @param C Cut-off observations to exclude (default: 50)
+#' @param n_burnin Burn-in observations to exclude (default: 100)
+#' @param n_cutoff Cut-off observations to exclude (default: 50)
 #' @param bounds Optional list with lower and upper parameter bounds
 #' @param n_nodes Number of Gauss-Hermite quadrature nodes (default: 30)
 #' @param scaling_method Score scaling method (default: "simple")
@@ -633,15 +633,15 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 #' # Estimate model with diagonal probabilities
 #' y <- rnorm(200)
 #' result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=3,
-#'                                   B_burnin=20, C=10)
+#'                                   n_burnin=20, n_cutoff=10)
 #'
 #' # Estimate model with off-diagonal probabilities
 #' result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=3,
-#'                                      B_burnin=20, C=10)
+#'                                      n_burnin=20, n_cutoff=10)
 #' }
 #' @export
 estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
-                               n_starts = 10, B_burnin = 100, C = 50, bounds = NULL,
+                               n_starts = 10, n_burnin = 100, n_cutoff = 50, bounds = NULL,
                                n_nodes = 30, scaling_method = NULL,
                                use_fallback = TRUE, A_threshold = 1e-4,
                                early_stopping = FALSE,
@@ -656,7 +656,7 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
   if (!is.numeric(K) || K < 2 || K != as.integer(K)) {
     stop("K must be an integer >= 2")
   }
-  if (length(y) <= B_burnin + C + K) {
+  if (length(y) <= n_burnin + n_cutoff + K) {
     stop("Time series too short for specified burn-in and cut-off")
   }
   
@@ -681,7 +681,7 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
     cat("Estimating GAS (score-driven) regime-switching model\n")
     cat("==================================================\n")
     cat("K:", K, "regimes\n")
-    cat("Data points:", length(y), "(using", length(y) - B_burnin - C, "after burn-in/cut-off)\n")
+    cat("Data points:", length(y), "(using", length(y) - n_burnin - n_cutoff, "after burn-in/cut-off)\n")
     cat("Parameterization:", ifelse(diag_probs, "diagonal", "off-diagonal"), "transition probabilities\n")
     cat("Variances:", ifelse(equal_variances, "equal (shared)", "separate"), "\n")
     cat("Starting points:", n_starts, "\n")
@@ -757,7 +757,7 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
         par_t_with_attrs[] <- par_t
         attr(par_t_with_attrs, "parameterization") <- "transformed"
         par_natural <- untransform_parameters(par_t_with_attrs)
-        neg_log_lik <- Rfiltering_GAS(par_natural, y, B_burnin, C,
+        neg_log_lik <- Rfiltering_GAS(par_natural, y, n_burnin, n_cutoff,
                                       n_nodes = n_nodes, scaling_method = scaling_method,
                                       use_fallback = use_fallback, A_threshold = A_threshold,
                                       diagnostics = FALSE, verbose = FALSE)
@@ -885,13 +885,13 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
 
   # Calculate model diagnostics
   num_params <- length(estimated_params)
-  num_data_points <- length(y) - B_burnin - C
+  num_data_points <- length(y) - n_burnin - n_cutoff
 
   aic <- 2 * optimization_result$objective + 2 * num_params
   bic <- 2 * optimization_result$objective + num_params * log(num_data_points)
   
   # Calculate filtered probabilities and additional diagnostics (with full diagnostics)
-  full_likelihood_result <- Rfiltering_GAS(estimated_params, y, B_burnin, C,
+  full_likelihood_result <- Rfiltering_GAS(estimated_params, y, n_burnin, n_cutoff,
                                            n_nodes = n_nodes, scaling_method = scaling_method,
                                            use_fallback = use_fallback, A_threshold = A_threshold,
                                            diagnostics = TRUE, verbose = (verbose >= 2))
@@ -939,8 +939,8 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
     ),
     data_info = list(
       n_obs = length(y),
-      burn_in = B_burnin,
-      cut_off = C,
+      burn_in = n_burnin,
+      cut_off = n_cutoff,
       n_used = num_data_points
     ),
     filtered_probabilities = attr(full_likelihood_result, "X.t"),
