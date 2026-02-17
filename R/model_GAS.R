@@ -417,14 +417,20 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
   # Note: eta[,1] already computed in vectorized pre-computation above
   tot_lik[1] <- sum(eta[, 1] * X_tlag[, 1])
 
-  # Calculate filtered probabilities X_t[,1]
-  X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik[1]
-  # Warn if drift is pathological, then re-normalize
-  if (abs(sum(X_t[, 1]) - 1) > 1e-4) {
-    warning(sprintf("Filtered probabilities at t=1 sum to %.6f, re-normalizing", sum(X_t[, 1])))
+  # Protect against numerical issues at t=1
+  if (tot_lik[1] <= 0 || is.na(tot_lik[1])) {
+    tot_lik[1] <- .Machine$double.eps
+    X_t[, 1] <- rep(1/K, K)
+  } else {
+    # Calculate filtered probabilities X_t[,1]
+    X_t[, 1] <- (eta[, 1] * X_tlag[, 1]) / tot_lik[1]
+    # Warn if drift is pathological, then re-normalize
+    if (abs(sum(X_t[, 1]) - 1) > 1e-4) {
+      warning(sprintf("Filtered probabilities at t=1 sum to %.6f, re-normalizing", sum(X_t[, 1])))
+    }
+    X_t[, 1] <- pmax(X_t[, 1], .Machine$double.eps)
+    X_t[, 1] <- X_t[, 1] / sum(X_t[, 1])
   }
-  X_t[, 1] <- pmax(X_t[, 1], .Machine$double.eps)
-  X_t[, 1] <- X_t[, 1] / sum(X_t[, 1])
 
   # Initialize score as zero
   score_scaled[, 1] <- 0
