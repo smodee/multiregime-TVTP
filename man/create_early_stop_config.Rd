@@ -6,7 +6,7 @@
 \usage{
 create_early_stop_config(
   enabled = FALSE,
-  patience = 500L,
+  patience = 3000L,
   rel_tol = 1e-08,
   max_objective = 1e+10,
   max_evals = 50000L
@@ -16,7 +16,7 @@ create_early_stop_config(
 \item{enabled}{Logical; whether early stopping is active.}
 
 \item{patience}{Integer; number of evaluations without improvement before
-stopping. Default 500.}
+stopping. Default 3000 (calibrated from K=3 estimation on real data).}
 
 \item{rel_tol}{Numeric; minimum relative improvement to count as progress.
 Default 1e-8.}
