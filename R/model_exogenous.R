@@ -89,6 +89,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
     # =========================================================================
     f[, 1] <- omega + A * X_Exo[1]
     p_trans[, 1] <- f_to_params(f[, 1])
+    if (!diag_probs) p_trans[, 1] <- clamp_offdiag_rowsums(p_trans[, 1], K)
 
     # Compute initial predicted probabilities using stationary distribution
     # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -108,6 +109,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
     # Set f[,2] using exogenous variable at index 2
     f[, 2] <- omega + A * X_Exo[2]
     p_trans[, 2] <- f_to_params(f[, 2])
+    if (!diag_probs) p_trans[, 2] <- clamp_offdiag_rowsums(p_trans[, 2], K)
 
     # =========================================================================
     # MAIN LOOP (t=1 to total_length-2): Generalized for K>=2
@@ -135,6 +137,7 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
       # Update f for next time step using exogenous variable
       f[, t + 2] <- omega + A * X_Exo[t + 2]
       p_trans[, t + 2] <- f_to_params(f[, t + 2])
+      if (!diag_probs) p_trans[, t + 2] <- clamp_offdiag_rowsums(p_trans[, t + 2], K)
     }
 
     # Remove burn-in and save the simulation run
@@ -241,6 +244,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   # =========================================================================
   f[, 1] <- omega + A * X_Exo[1]
   p_trans[, 1] <- f_to_params(f[, 1])
+  if (!diag_probs) p_trans[, 1] <- clamp_offdiag_rowsums(p_trans[, 1], K)
 
   # Compute initial predicted probabilities using stationary distribution
   # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -261,6 +265,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
   if (M >= 2) {
     f[, 2] <- omega + A * X_Exo[2]
     p_trans[, 2] <- f_to_params(f[, 2])
+    if (!diag_probs) p_trans[, 2] <- clamp_offdiag_rowsums(p_trans[, 2], K)
   }
 
   # =========================================================================
@@ -286,6 +291,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
       if (t < M - 1) {
         f[, t+1] <- omega + A * X_Exo[t+1]
         p_trans[, t+1] <- f_to_params(f[, t+1])
+        if (!diag_probs) p_trans[, t+1] <- clamp_offdiag_rowsums(p_trans[, t+1], K)
       }
     }
   }
@@ -298,6 +304,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
     if (M > 2) {
       f[, M] <- omega + A * X_Exo[M]
       p_trans[, M] <- f_to_params(f[, M])
+      if (!diag_probs) p_trans[, M] <- clamp_offdiag_rowsums(p_trans[, M], K)
     }
 
     # Generate predicted probabilities using generalized formula

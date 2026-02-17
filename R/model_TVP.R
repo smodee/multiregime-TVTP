@@ -92,6 +92,7 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
     # Set f[1] = omega_LR (long-run value)
     f[, 1] <- omega_LR
     p_trans[, 1] <- f_to_params(f[, 1])
+    if (!diag_probs) p_trans[, 1] <- clamp_offdiag_rowsums(p_trans[, 1], K)
 
     # Compute initial predicted probabilities using stationary distribution
     # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -117,6 +118,7 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
       # This is done at the BEGINNING of each iteration (matching original)
       f[, t + 1] <- omega + A * y.sim[t]
       p_trans[, t + 1] <- f_to_params(f[, t + 1])
+      if (!diag_probs) p_trans[, t + 1] <- clamp_offdiag_rowsums(p_trans[, t + 1], K)
 
       # Compute predicted probabilities X_tlag[t+1] using generalized formula
       # Works for any K>=2
@@ -237,6 +239,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   # At t=1, use omega_LR (long-run value) for initial transition probabilities
   f[, 1] <- omega_LR
   p_trans[, 1] <- f_to_params(f[, 1])
+  if (!diag_probs) p_trans[, 1] <- clamp_offdiag_rowsums(p_trans[, 1], K)
 
   # Compute initial predicted probabilities using stationary distribution
   # This works for any K>=2 using eigenvalue-based stationary distribution
@@ -261,6 +264,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
   if (M >= 2) {
     f[, 2] <- omega
     p_trans[, 2] <- f_to_params(f[, 2])
+    if (!diag_probs) p_trans[, 2] <- clamp_offdiag_rowsums(p_trans[, 2], K)
   }
 
   # =========================================================================
@@ -287,6 +291,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
       if (t < M - 1) {
         f[, t+1] <- omega + A * y[t]
         p_trans[, t+1] <- f_to_params(f[, t+1])
+        if (!diag_probs) p_trans[, t+1] <- clamp_offdiag_rowsums(p_trans[, t+1], K)
       }
     }
   }
@@ -299,6 +304,7 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
     if (M > 2) {
       f[, M] <- omega + A * y[M-1]
       p_trans[, M] <- f_to_params(f[, M])
+      if (!diag_probs) p_trans[, M] <- clamp_offdiag_rowsums(p_trans[, M], K)
     }
 
     # Generate predicted probabilities using generalized formula

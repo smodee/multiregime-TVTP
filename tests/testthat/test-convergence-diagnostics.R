@@ -603,3 +603,74 @@ test_that("GAS K=3 off-diagonal unequal-var estimation converges", {
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
               info = paste("GAS K=3 NLL:", round(result$diagnostics$neg_log_likelihood, 2)))
 })
+
+# ===========================================================================
+# Section 7: Regression test for issue #31 -- off-diagonal row sum clamping
+# ===========================================================================
+# Issue #31: Exogenous model with wide-range X_Exo causes off-diagonal
+# transition probabilities to sum >1 within a row, making the diagonal
+# negative. This produces invalid transition matrices and crashes.
+
+test_that("clamp_offdiag_rowsums prevents invalid row sums", {
+  K <- 3L
+  # Off-diagonal probs that sum to >1 in row 1 (0.6+0.5=1.1)
+  p_bad <- c(0.6, 0.5,   # row 1: sum = 1.1 > 1
+             0.2, 0.3,   # row 2: sum = 0.5, OK
+             0.4, 0.7)   # row 3: sum = 1.1 > 1
+  p_fixed <- clamp_offdiag_rowsums(p_bad, K)
+
+  # Check row sums are now <= 1 - 1e-6
+  for (i in 1:K) {
+    idx <- ((i - 1) * (K - 1) + 1):(i * (K - 1))
+    expect_lte(sum(p_fixed[idx]), 1 - 1e-6)
+  }
+
+  # Row 2 was fine, so should be unchanged
+  expect_equal(p_fixed[3:4], p_bad[3:4])
+
+  # Rows 1 and 3 should be proportionally scaled (same ratio)
+  expect_equal(p_fixed[1] / p_fixed[2], p_bad[1] / p_bad[2], tolerance = 1e-10)
+  expect_equal(p_fixed[5] / p_fixed[6], p_bad[5] / p_bad[6], tolerance = 1e-10)
+})
+
+test_that("clamp_offdiag_rowsums is no-op for valid probabilities", {
+  K <- 3L
+  p_good <- c(0.1, 0.15, 0.2, 0.1, 0.05, 0.25)
+  p_result <- clamp_offdiag_rowsums(p_good, K)
+  expect_equal(p_result, p_good)
+})
+
+test_that("exogenous filter K=3 off-diagonal with large A and wide X_Exo returns finite NLL (issue #31)", {
+  set.seed(42)
+  y <- c(rnorm(150, -2, sqrt(0.5)), rnorm(150, 0, 1), rnorm(150, 2, sqrt(1.5)))
+  # Wide-range exogenous variable (mimics lagged yield levels)
+  X_Exo <- seq(0, 16, length.out = length(y))
+
+  # Parameters with large A coefficients that would push off-diag row sums > 1
+  par <- c(-2, 0, 2,                           # mu
+           0.5, 1.0, 1.5,                      # sigma2
+           0.1, 0.15, 0.1, 0.15, 0.1, 0.15,   # trans_prob (off-diagonal)
+           0.5, 0.5, 0.3, 0.3, 0.4, 0.4)      # A (large enough to cause issues)
+  par <- set_parameter_attributes(par, K = 3, model_type = "exogenous",
+                                  diag_probs = FALSE, equal_variances = FALSE)
+
+  # Before the fix, this would error with "Transition matrix contains negative values"
+  nll <- Rfiltering_TVPXExo(par, X_Exo, y, B = 20, C = 10)
+  expect_true(is.finite(nll), info = paste("NLL was:", nll))
+})
+
+test_that("TVP filter K=3 off-diagonal with large A returns finite NLL (issue #31)", {
+  set.seed(42)
+  # Data with wide range to trigger the bug via autoregressive dynamics
+  y <- c(rnorm(200, -3, 2), rnorm(200, 3, 2))
+
+  par <- c(-3, 0, 3,                           # mu
+           1.0, 1.0, 1.0,                      # sigma2
+           0.1, 0.15, 0.1, 0.15, 0.1, 0.15,   # trans_prob (off-diagonal)
+           0.8, 0.8, 0.5, 0.5, 0.6, 0.6)      # A (large)
+  par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
+                                  diag_probs = FALSE, equal_variances = FALSE)
+
+  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  expect_true(is.finite(nll), info = paste("NLL was:", nll))
+})
