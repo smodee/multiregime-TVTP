@@ -124,7 +124,8 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     # Use clamped logistic to match original HMMGAS C implementation
     # This maps f directly to [1e-10, 1-1e-10] for numerical stability
     p_trans[,1] <- f_to_params_loop(f[,1])
-    
+    if (!diag_probs) p_trans[,1] <- clamp_offdiag_rowsums(p_trans[,1], K)
+
     # Initialize score as zero
     score_scaled[,1] <- 0
     
@@ -182,6 +183,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       
       # Convert f to transition parameters
       p_trans[,t+1] <- f_to_params_loop(f[,t+1])
+      if (!diag_probs) p_trans[,t+1] <- clamp_offdiag_rowsums(p_trans[,t+1], K)
     }
 
     # For the last time point - use generalized formula
@@ -407,6 +409,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 
   # Compute transition probabilities at t=1
   p_trans[, 1] <- f_to_params(f[, 1])
+  if (!diag_probs) p_trans[, 1] <- clamp_offdiag_rowsums(p_trans[, 1], K)
 
   # Compute stationary distribution using eigenvalue method (works for any K>=2)
   stationary_probs <- stat_dist(p_trans[, 1], diag_probs = diag_probs)
@@ -470,6 +473,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
     f[, 2] <- omega + A * score_scaled[, 2] + B * (f[, 1] - omega)
     # Use clamped logistic for p_trans[,2] to match C code (lines 125-126)
     p_trans[, 2] <- f_to_params_loop(f[, 2])
+    if (!diag_probs) p_trans[, 2] <- clamp_offdiag_rowsums(p_trans[, 2], K)
   }
 
   # =============================================================================
@@ -535,6 +539,7 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 
       # Convert f to transition probabilities using clamped logistic
       p_trans[, t+1] <- f_to_params_loop(f[, t+1])
+      if (!diag_probs) p_trans[, t+1] <- clamp_offdiag_rowsums(p_trans[, t+1], K)
     }
   }
 

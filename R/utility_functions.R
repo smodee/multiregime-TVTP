@@ -71,6 +71,42 @@ logistic_clamped <- function(x, eps = 1e-10) {
   return(eps + (1 - 2*eps) / (1 + exp(-x)))
 }
 
+#' Clamp off-diagonal transition probability row sums
+#'
+#' Ensures that the off-diagonal probabilities within each row of a transition
+#' matrix sum to at most \code{max_rowsum}, by proportionally scaling down all
+#' entries in a row when their sum exceeds the threshold. This guarantees valid
+#' transition matrices (positive diagonals) when using independent logistic
+#' transforms for each off-diagonal entry.
+#'
+#' @param p_trans Vector of K*(K-1) off-diagonal probabilities in row-major
+#'   order (K-1 entries per row).
+#' @param K Number of regimes.
+#' @param max_rowsum Maximum allowed sum of off-diagonal probabilities per row
+#'   (default: 1 - 1e-6).
+#' @return Clamped probability vector (same length as input).
+#' @details
+#' With \code{diag_probs=FALSE}, each off-diagonal transition probability is
+#' computed independently via logistic(f), which constrains each to (0,1) but
+#' does not prevent their row sum from exceeding 1. When the sum exceeds 1, the
+#' diagonal entry (1 - sum) becomes negative, producing an invalid transition
+#' matrix. This function prevents that by proportionally scaling down the
+#' off-diagonal entries when needed.
+#'
+#' The function is a no-op when all row sums are already below \code{max_rowsum}.
+#' @keywords internal
+clamp_offdiag_rowsums <- function(p_trans, K, max_rowsum = 1 - 1e-6) {
+  n_per_row <- K - 1L
+  for (i in seq_len(K)) {
+    idx <- ((i - 1L) * n_per_row + 1L):(i * n_per_row)
+    row_sum <- sum(p_trans[idx])
+    if (row_sum > max_rowsum) {
+      p_trans[idx] <- p_trans[idx] * (max_rowsum / row_sum)
+    }
+  }
+  p_trans
+}
+
 #' Softmax row transformation with reference category
 #'
 #' Converts K-1 unconstrained real parameters into a full row of K probabilities
