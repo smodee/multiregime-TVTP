@@ -359,7 +359,8 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 #' @param C Cut-off observations to exclude (default: 50)
 #' @param bounds Optional list with lower and upper parameter bounds
 #' @param early_stopping Enable early stopping for diverging starts (default: FALSE)
-#' @param early_stop_patience Evaluations without improvement before stopping (default: 500)
+#' @param early_stop_patience Evaluations without improvement before stopping
+#'   (default: 3000, calibrated from K=3 estimation on real data)
 #' @param early_stop_max_evals Maximum evaluations per start (default: 50000)
 #' @param parallel Enable parallel processing for multiple starts (default: TRUE)
 #' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
@@ -387,7 +388,7 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, B, C, diagnostics = FALSE) {
 estimate_exo_model <- function(y, X_Exo, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,
                                early_stopping = FALSE,
-                               early_stop_patience = 500L,
+                               early_stop_patience = 3000L,
                                early_stop_max_evals = 50000L,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   

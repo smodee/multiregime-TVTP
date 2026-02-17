@@ -18,7 +18,7 @@ estimate_gas_model(
   use_fallback = TRUE,
   A_threshold = 1e-04,
   early_stopping = FALSE,
-  early_stop_patience = 500L,
+  early_stop_patience = 3000L,
   early_stop_max_evals = 50000L,
   parallel = TRUE,
   cores = NULL,
@@ -53,7 +53,8 @@ estimate_gas_model(
 
 \item{early_stopping}{Enable early stopping for diverging starts (default: FALSE)}
 
-\item{early_stop_patience}{Evaluations without improvement before stopping (default: 500)}
+\item{early_stop_patience}{Evaluations without improvement before stopping
+(default: 3000, calibrated from K=3 estimation on real data)}
 
 \item{early_stop_max_evals}{Maximum evaluations per start (default: 50000)}
 
