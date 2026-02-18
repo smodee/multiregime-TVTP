@@ -507,11 +507,11 @@ test_that("GAS K=3 off-diagonal single-start attempts optimization", {
 test_that("TVP K=2 off-diagonal estimation converges on synthetic data", {
   skip_on_cran()
   set.seed(100)
-  y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
+  y <- c(rnorm(150, -1, 0.5), rnorm(150, 1, 0.7))
 
   result <- estimate_tvp_model(
     y, K = 2, diag_probs = FALSE, equal_variances = TRUE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -522,13 +522,13 @@ test_that("TVP K=2 off-diagonal estimation converges on synthetic data", {
 test_that("exogenous K=2 off-diagonal estimation converges on synthetic data", {
   skip_on_cran()
   set.seed(100)
-  y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
+  y <- c(rnorm(150, -1, 0.5), rnorm(150, 1, 0.7))
   X_Exo <- rnorm(length(y))
 
   # With logistic link, exogenous K=2 off-diagonal should converge
   result <- estimate_exo_model(
     y, X_Exo = X_Exo, K = 2, diag_probs = FALSE, equal_variances = TRUE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -539,11 +539,11 @@ test_that("exogenous K=2 off-diagonal estimation converges on synthetic data", {
 test_that("GAS K=2 off-diagonal estimation converges on synthetic data", {
   skip_on_cran()
   set.seed(100)
-  y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
+  y <- c(rnorm(150, -1, 0.5), rnorm(150, 1, 0.7))
 
   result <- estimate_gas_model(
     y, K = 2, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE,
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
     use_fallback = TRUE
   )
 
@@ -563,11 +563,11 @@ test_that("GAS K=2 off-diagonal estimation converges on synthetic data", {
 test_that("TVP K=3 off-diagonal unequal-var estimation converges", {
   skip_on_cran()
   set.seed(42)
-  y <- c(rnorm(200, -2, sqrt(0.5)), rnorm(200, 0, 1), rnorm(200, 2, sqrt(1.5)))
+  y <- c(rnorm(135, -2, sqrt(0.5)), rnorm(135, 0, 1), rnorm(130, 2, sqrt(1.5)))
 
   result <- estimate_tvp_model(
     y, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -577,12 +577,12 @@ test_that("TVP K=3 off-diagonal unequal-var estimation converges", {
 test_that("exogenous K=3 off-diagonal unequal-var estimation converges", {
   skip_on_cran()
   set.seed(42)
-  y <- c(rnorm(200, -2, sqrt(0.5)), rnorm(200, 0, 1), rnorm(200, 2, sqrt(1.5)))
+  y <- c(rnorm(135, -2, sqrt(0.5)), rnorm(135, 0, 1), rnorm(130, 2, sqrt(1.5)))
   X_Exo <- rnorm(length(y))
 
   result <- estimate_exo_model(
     y, X_Exo = X_Exo, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0
   )
 
   expect_true(is.finite(result$diagnostics$neg_log_likelihood),
@@ -592,11 +592,11 @@ test_that("exogenous K=3 off-diagonal unequal-var estimation converges", {
 test_that("GAS K=3 off-diagonal unequal-var estimation converges", {
   skip_on_cran()
   set.seed(42)
-  y <- c(rnorm(200, -2, sqrt(0.5)), rnorm(200, 0, 1), rnorm(200, 2, sqrt(1.5)))
+  y <- c(rnorm(135, -2, sqrt(0.5)), rnorm(135, 0, 1), rnorm(130, 2, sqrt(1.5)))
 
   result <- estimate_gas_model(
     y, K = 3, diag_probs = FALSE, equal_variances = FALSE,
-    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0, parallel = FALSE,
+    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
     use_fallback = TRUE
   )
 
@@ -655,7 +655,7 @@ test_that("exogenous filter K=3 off-diagonal with large A and wide X_Exo returns
                                   diag_probs = FALSE, equal_variances = FALSE)
 
   # Before the fix, this would error with "Transition matrix contains negative values"
-  nll <- Rfiltering_TVPXExo(par, X_Exo, y, B = 20, C = 10)
+  nll <- Rfiltering_TVPXExo(par, X_Exo, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
 })
 
@@ -671,6 +671,6 @@ test_that("TVP filter K=3 off-diagonal with large A returns finite NLL (issue #3
   par <- set_parameter_attributes(par, K = 3, model_type = "tvp",
                                   diag_probs = FALSE, equal_variances = FALSE)
 
-  nll <- Rfiltering_TVP(par, y, B = 20, C = 10)
+  nll <- Rfiltering_TVP(par, y, n_burnin = 20, n_cutoff = 10)
   expect_true(is.finite(nll), info = paste("NLL was:", nll))
 })

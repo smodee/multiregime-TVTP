@@ -155,8 +155,7 @@ test_that("constant model estimation works with early stopping enabled", {
 
   # Use generous thresholds to avoid prematurely stopping all starts
   result <- estimate_constant_model(y, K = 2, diag_probs = FALSE,
-                                    n_starts = 3, n_burnin = 20, n_cutoff = 10, verbose = 0,
-                                    parallel = FALSE,
+                                    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
                                     early_stopping = TRUE,
                                     early_stop_patience = 5000,
                                     early_stop_max_evals = 500000)
@@ -174,8 +173,7 @@ test_that("early_stopping=FALSE preserves backward compatibility", {
   y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
 
   result <- estimate_constant_model(y, K = 2, diag_probs = FALSE,
-                                    n_starts = 2, n_burnin = 20, n_cutoff = 10, verbose = 0,
-                                    parallel = FALSE,
+                                    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
                                     early_stopping = FALSE)
 
   # New fields should exist but with zero/FALSE values
@@ -195,8 +193,7 @@ test_that("early-stopped runs never win best-result selection", {
 
   # Use enough starts and generous enough thresholds that at least one converges
   result <- estimate_constant_model(y, K = 2, diag_probs = FALSE,
-                                    n_starts = 5, n_burnin = 20, n_cutoff = 10, verbose = 0,
-                                    parallel = FALSE,
+                                    n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
                                     early_stopping = TRUE,
                                     early_stop_patience = 5000,
                                     early_stop_max_evals = 500000)
@@ -219,8 +216,7 @@ test_that("TVP model estimation works with early stopping", {
   y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
 
   result <- estimate_tvp_model(y, K = 2, diag_probs = FALSE,
-                               n_starts = 2, n_burnin = 20, n_cutoff = 10, verbose = 0,
-                               parallel = FALSE,
+                               n_starts = 4, n_burnin = 20, n_cutoff = 10, verbose = 0,
                                early_stopping = TRUE,
                                early_stop_patience = 5000,
                                early_stop_max_evals = 500000)

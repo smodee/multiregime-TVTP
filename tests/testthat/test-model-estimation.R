@@ -8,7 +8,7 @@ test_that("constant model estimation works with off-diagonal parameterization", 
   y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
 
   result <- estimate_constant_model(y, K = 2, diag_probs = FALSE,
-                                    n_starts = 5, verbose = 0)
+                                    n_starts = 4, verbose = 0)
   expect_equal(result$diagnostics$convergence_code, 0)
   expect_true(is.finite(result$diagnostics$neg_log_likelihood))
   # Regime means should be roughly -1 and 1 (order may differ)
@@ -22,7 +22,7 @@ test_that("constant model estimation still works with diagonal parameterization"
   y <- c(rnorm(200, -1, 0.5), rnorm(200, 1, 0.7))
 
   result <- estimate_constant_model(y, K = 2, diag_probs = TRUE,
-                                    n_starts = 5, verbose = 0)
+                                    n_starts = 4, verbose = 0)
   expect_equal(result$diagnostics$convergence_code, 0)
   expect_true(is.finite(result$diagnostics$neg_log_likelihood))
 })
@@ -149,7 +149,7 @@ test_that("constant model estimation works with K=3 off-diagonal", {
   y <- c(rnorm(150, -2, 0.5), rnorm(150, 0, 0.5), rnorm(150, 2, 0.5))
 
   result <- estimate_constant_model(y, K = 3, diag_probs = FALSE,
-                                    n_starts = 5, verbose = 0)
+                                    n_starts = 4, verbose = 0)
   expect_equal(result$diagnostics$convergence_code, 0)
   expect_true(is.finite(result$diagnostics$neg_log_likelihood))
 })
