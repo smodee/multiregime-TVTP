@@ -644,14 +644,14 @@ generate_starting_points <- function(y, K, model_type = c("constant", "tvp", "ex
 #'   Default 1e-8.
 #' @param max_objective Numeric; objective values above this trigger immediate
 #'   stopping. Default 1e10.
-#' @param max_evals Integer; maximum total evaluations per start. Default 50000.
+#' @param max_evals Integer; maximum total evaluations per start. Default 60000.
 #' @return A list with the configuration values.
 #' @keywords internal
 create_early_stop_config <- function(enabled = FALSE,
-                                     patience = 3000L,
+                                     patience = 10000L,
                                      rel_tol = 1e-8,
                                      max_objective = 1e10,
-                                     max_evals = 50000L) {
+                                     max_evals = 60000L) {
   list(
     enabled = enabled,
     patience = as.integer(patience),

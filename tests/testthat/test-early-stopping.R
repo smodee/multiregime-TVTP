@@ -110,10 +110,10 @@ test_that("non-finite objective values return penalty without triggering early s
 test_that("create_early_stop_config returns correct defaults", {
   config <- create_early_stop_config()
   expect_false(config$enabled)
-  expect_equal(config$patience, 3000L)
+  expect_equal(config$patience, 10000L)
   expect_equal(config$rel_tol, 1e-8)
   expect_equal(config$max_objective, 1e10)
-  expect_equal(config$max_evals, 50000L)
+  expect_equal(config$max_evals, 60000L)
 })
 
 test_that("create_early_stop_config respects custom values", {
