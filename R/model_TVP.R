@@ -360,8 +360,8 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
 #' @param bounds Optional list with lower and upper parameter bounds
 #' @param early_stopping Enable early stopping for diverging starts (default: FALSE)
 #' @param early_stop_patience Evaluations without improvement before stopping
-#'   (default: 3000, calibrated from K=3 estimation on real data)
-#' @param early_stop_max_evals Maximum evaluations per start (default: 50000)
+#'   (default: 10000, calibrated from K=3 estimation on real data)
+#' @param early_stop_max_evals Maximum evaluations per start (default: 60000)
 #' @param parallel Enable parallel processing for multiple starts (default: TRUE)
 #' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
 #' @param seed Random seed for reproducibility (optional)
@@ -387,10 +387,10 @@ Rfiltering_TVP <- function(par, y, B, C, diagnostics = FALSE) {
 estimate_tvp_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_starts = 10, B = 100, C = 50, bounds = NULL,
                                early_stopping = FALSE,
-                               early_stop_patience = 3000L,
-                               early_stop_max_evals = 50000L,
+                               early_stop_patience = 10000L,
+                               early_stop_max_evals = 60000L,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
-  
+
   # Input validation
   if (!is.numeric(y) || length(y) == 0) {
     stop("y must be a non-empty numeric vector")

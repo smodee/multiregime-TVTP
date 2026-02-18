@@ -605,8 +605,8 @@ Rfiltering_GAS <- function(par, y, B_burnin, C, n_nodes = 30, scaling_method = N
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
 #' @param early_stopping Enable early stopping for diverging starts (default: FALSE)
 #' @param early_stop_patience Evaluations without improvement before stopping
-#'   (default: 3000, calibrated from K=3 estimation on real data)
-#' @param early_stop_max_evals Maximum evaluations per start (default: 50000)
+#'   (default: 10000, calibrated from K=3 estimation on real data)
+#' @param early_stop_max_evals Maximum evaluations per start (default: 60000)
 #' @param parallel Enable parallel processing for multiple starts (default: TRUE)
 #' @param cores Number of cores for parallel processing (default: future::availableCores()-1)
 #' @param seed Random seed for reproducibility (optional)
@@ -634,8 +634,8 @@ estimate_gas_model <- function(y, K, diag_probs = TRUE, equal_variances = FALSE,
                                n_nodes = 30, scaling_method = NULL,
                                use_fallback = TRUE, A_threshold = 1e-4,
                                early_stopping = FALSE,
-                               early_stop_patience = 3000L,
-                               early_stop_max_evals = 50000L,
+                               early_stop_patience = 10000L,
+                               early_stop_max_evals = 60000L,
                                parallel = TRUE, cores = NULL, seed = NULL, verbose = 1) {
   
   # Input validation
