@@ -86,6 +86,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
   
   # Set up a matrix to save the output
   data <- matrix(0, M, N)
+  S_true <- matrix(0L, nrow = M, ncol = N)
   
   # Get baseline transition parameters in f-space
   if (diag_probs) {
@@ -193,6 +194,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
     
     # Remove burn-in and save the simulation run in the data matrix
     data[i,] <- y.sim[(burn_in+1):total_length]
+    S_true[i,] <- S[(burn_in+1):total_length]
     
     # Optional warning about excessive zero scores
     if (zero_score_count > 0.5 * (total_length - 1)) {
@@ -217,6 +219,7 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
       A = A,
       B = B
     ),
+    true_states = S_true,
     gas_settings = list(
       n_nodes = n_nodes,
       scaling_method = scaling_method,
