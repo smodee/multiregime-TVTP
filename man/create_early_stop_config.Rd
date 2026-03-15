@@ -6,10 +6,10 @@
 \usage{
 create_early_stop_config(
   enabled = FALSE,
-  patience = 3000L,
+  patience = 10000L,
   rel_tol = 1e-08,
   max_objective = 1e+10,
-  max_evals = 50000L
+  max_evals = 60000L
 )
 }
 \arguments{
@@ -24,7 +24,7 @@ Default 1e-8.}
 \item{max_objective}{Numeric; objective values above this trigger immediate
 stopping. Default 1e10.}
 
-\item{max_evals}{Integer; maximum total evaluations per start. Default 50000.}
+\item{max_evals}{Integer; maximum total evaluations per start. Default 60000.}
 }
 \value{
 A list with the configuration values.

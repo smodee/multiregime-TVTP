@@ -1056,7 +1056,7 @@ validate_scaling_inputs <- function(raw_score, fisher_info, method = "moore_penr
 #' the overall information content.
 #' 
 #' The integration follows the original 2-regime implementation:
-#' I = integral [(d1-d2)^2/den] * phi(y; mu_quad, sigma_quad^2) dy
+#' I = integral \code{(d1-d2)^2/den} * phi(y; mu_quad, sigma_quad^2) dy
 #'
 #' where d1, d2 are regime densities and den is the total density.
 #'

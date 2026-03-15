@@ -4,16 +4,16 @@
 \alias{Rfiltering_Const}
 \title{Filter observed data through the constant transition probability regime-switching model}
 \usage{
-Rfiltering_Const(par, y, B, C, diagnostics = FALSE)
+Rfiltering_Const(par, y, n_burnin, n_cutoff, diagnostics = FALSE)
 }
 \arguments{
 \item{par}{Parameter vector with attributes (mu, sigma2, trans_prob)}
 
 \item{y}{Observed time series increments}
 
-\item{B}{Burn-in to be excluded at the beginning of the time series}
+\item{n_burnin}{Burn-in to be excluded at the beginning of the time series}
 
-\item{C}{Cut-off to be excluded at the end of the time series}
+\item{n_cutoff}{Cut-off to be excluded at the end of the time series}
 
 \item{diagnostics}{Choose whether to store calculation diagnostics or not}
 }
@@ -36,5 +36,5 @@ par_diag <- c(-1, 1, 0.5, 0.5, 0.8, 0.9)
 par_diag <- set_parameter_attributes(par_diag, K=2, model_type="constant",
                                      diag_probs=TRUE, equal_variances=FALSE)
 y <- rnorm(200)
-loglik <- Rfiltering_Const(par_diag, y, 20, 10)
+loglik <- Rfiltering_Const(par_diag, y, n_burnin = 20, n_cutoff = 10)
 }

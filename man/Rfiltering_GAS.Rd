@@ -7,8 +7,8 @@
 Rfiltering_GAS(
   par,
   y,
-  B_burnin,
-  C,
+  n_burnin,
+  n_cutoff,
   n_nodes = 30,
   scaling_method = NULL,
   use_fallback = TRUE,
@@ -22,9 +22,9 @@ Rfiltering_GAS(
 
 \item{y}{Observed time series increments}
 
-\item{B_burnin}{Burn-in to be excluded at the beginning of the time series}
+\item{n_burnin}{Burn-in to be excluded at the beginning of the time series}
 
-\item{C}{Cut-off to be excluded at the end of the time series}
+\item{n_cutoff}{Cut-off to be excluded at the end of the time series}
 
 \item{n_nodes}{Number of Gauss-Hermite quadrature nodes (default: 30)}
 

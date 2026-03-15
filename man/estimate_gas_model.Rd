@@ -10,16 +10,16 @@ estimate_gas_model(
   diag_probs = TRUE,
   equal_variances = FALSE,
   n_starts = 10,
-  B_burnin = 100,
-  C = 50,
+  n_burnin = 100,
+  n_cutoff = 50,
   bounds = NULL,
   n_nodes = 30,
   scaling_method = NULL,
   use_fallback = TRUE,
   A_threshold = 1e-04,
   early_stopping = FALSE,
-  early_stop_patience = 3000L,
-  early_stop_max_evals = 50000L,
+  early_stop_patience = 10000L,
+  early_stop_max_evals = 60000L,
   parallel = TRUE,
   cores = NULL,
   seed = NULL,
@@ -37,9 +37,9 @@ estimate_gas_model(
 
 \item{n_starts}{Number of random starting points for optimization (default: 10)}
 
-\item{B_burnin}{Burn-in observations to exclude (default: 100)}
+\item{n_burnin}{Burn-in observations to exclude (default: 100)}
 
-\item{C}{Cut-off observations to exclude (default: 50)}
+\item{n_cutoff}{Cut-off observations to exclude (default: 50)}
 
 \item{bounds}{Optional list with lower and upper parameter bounds}
 
@@ -54,9 +54,9 @@ estimate_gas_model(
 \item{early_stopping}{Enable early stopping for diverging starts (default: FALSE)}
 
 \item{early_stop_patience}{Evaluations without improvement before stopping
-(default: 3000, calibrated from K=3 estimation on real data)}
+(default: 10000, calibrated from K=3 estimation on real data)}
 
-\item{early_stop_max_evals}{Maximum evaluations per start (default: 50000)}
+\item{early_stop_max_evals}{Maximum evaluations per start (default: 60000)}
 
 \item{parallel}{Enable parallel processing for multiple starts (default: TRUE)}
 
@@ -73,19 +73,31 @@ List with estimation results including parameters, diagnostics, and metadata
 Estimate GAS regime-switching model
 }
 \details{
-UPDATED to support both diagonal and off-diagonal transition probability parameterizations
-using the new attribute-based parameter system. This enables exact validation against
+Supports both diagonal and off-diagonal transition probability parameterizations
+using the attribute-based parameter system. This enables exact validation against
 the original simulation.R implementation when diag_probs=TRUE.
+}
+\note{
+\strong{sigma2/A identifiability (Issue #29):} The GAS score scaling depends on both
+sigma2 (through the Fisher information) and A (as a direct multiplier). These
+parameters trade off against each other, creating a ridge in the likelihood surface:
+different (sigma2, A) combinations produce nearly identical filtered transition
+probabilities and log-likelihoods. As a result, MLE typically estimates A near zero
+regardless of the true value. This is an inherent property of the GAS model, not
+an implementation bug — the legacy HMMGAS C code exhibits the same behavior.
+Means (mu), transition probabilities, and autoregressive coefficients (B) are
+well-identified and reliably recovered. See
+\code{scripts/diagnose_gas_exp2_3.R} for likelihood profile evidence.
 }
 \examples{
 \donttest{
 # Estimate model with diagonal probabilities
 y <- rnorm(200)
 result_diag <- estimate_gas_model(y, K=2, diag_probs=TRUE, n_starts=3,
-                                  B_burnin=20, C=10)
+                                  n_burnin=20, n_cutoff=10)
 
 # Estimate model with off-diagonal probabilities
 result_offdiag <- estimate_gas_model(y, K=2, diag_probs=FALSE, n_starts=3,
-                                     B_burnin=20, C=10)
+                                     n_burnin=20, n_cutoff=10)
 }
 }

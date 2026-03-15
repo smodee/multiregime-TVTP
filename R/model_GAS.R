@@ -627,9 +627,21 @@ Rfiltering_GAS <- function(par, y, n_burnin, n_cutoff, n_nodes = 30, scaling_met
 #' @param verbose Verbosity level (0=silent, 1=basic, 2=detailed)
 #' @return List with estimation results including parameters, diagnostics, and metadata
 #' @details
-#' UPDATED to support both diagonal and off-diagonal transition probability parameterizations
-#' using the new attribute-based parameter system. This enables exact validation against
+#' Supports both diagonal and off-diagonal transition probability parameterizations
+#' using the attribute-based parameter system. This enables exact validation against
 #' the original simulation.R implementation when diag_probs=TRUE.
+#'
+#' @note
+#' **sigma2/A identifiability (Issue #29):** The GAS score scaling depends on both
+#' sigma2 (through the Fisher information) and A (as a direct multiplier). These
+#' parameters trade off against each other, creating a ridge in the likelihood surface:
+#' different (sigma2, A) combinations produce nearly identical filtered transition
+#' probabilities and log-likelihoods. As a result, MLE typically estimates A near zero
+#' regardless of the true value. This is an inherent property of the GAS model, not
+#' an implementation bug — the legacy HMMGAS C code exhibits the same behavior.
+#' Means (mu), transition probabilities, and autoregressive coefficients (B) are
+#' well-identified and reliably recovered. See
+#' \code{scripts/diagnose_gas_exp2_3.R} for likelihood profile evidence.
 #'
 #' @examples
 #' \donttest{

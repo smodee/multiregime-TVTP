@@ -4,7 +4,7 @@
 \alias{Rfiltering_TVPXExo}
 \title{Filter observed data through the exogenous variable-driven regime-switching model}
 \usage{
-Rfiltering_TVPXExo(par, X_Exo, y, B, C, diagnostics = FALSE)
+Rfiltering_TVPXExo(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE)
 }
 \arguments{
 \item{par}{Parameter vector with attributes (mu, sigma2, init_trans, A)}
@@ -13,9 +13,9 @@ Rfiltering_TVPXExo(par, X_Exo, y, B, C, diagnostics = FALSE)
 
 \item{y}{Observed time series increments}
 
-\item{B}{Burn-in to be excluded at the beginning of the time series}
+\item{n_burnin}{Burn-in to be excluded at the beginning of the time series}
 
-\item{C}{Cut-off to be excluded at the end of the time series}
+\item{n_cutoff}{Cut-off to be excluded at the end of the time series}
 
 \item{diagnostics}{If TRUE, include detailed diagnostic information (default: TRUE)}
 }
@@ -42,5 +42,5 @@ par_diag <- set_parameter_attributes(par_diag, K=2, model_type="exogenous",
                                      diag_probs=TRUE, equal_variances=FALSE)
 X_Exo <- rnorm(200)
 y <- rnorm(200)
-loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, 20, 10)
+loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, n_burnin=20, n_cutoff=10)
 }

@@ -10,12 +10,12 @@ estimate_constant_model(
   diag_probs = TRUE,
   equal_variances = FALSE,
   n_starts = 10,
-  B = 100,
-  C = 50,
+  n_burnin = 100,
+  n_cutoff = 50,
   bounds = NULL,
   early_stopping = FALSE,
-  early_stop_patience = 3000L,
-  early_stop_max_evals = 50000L,
+  early_stop_patience = 10000L,
+  early_stop_max_evals = 60000L,
   parallel = TRUE,
   cores = NULL,
   seed = NULL,
@@ -33,18 +33,18 @@ estimate_constant_model(
 
 \item{n_starts}{Number of random starting points for optimization (default: 10)}
 
-\item{B}{Burn-in observations to exclude (default: 100)}
+\item{n_burnin}{Burn-in observations to exclude (default: 100)}
 
-\item{C}{Cut-off observations to exclude (default: 50)}
+\item{n_cutoff}{Cut-off observations to exclude (default: 50)}
 
 \item{bounds}{Optional list with lower and upper parameter bounds}
 
 \item{early_stopping}{Enable early stopping for diverging starts (default: FALSE)}
 
 \item{early_stop_patience}{Evaluations without improvement before stopping
-(default: 3000, calibrated from K=3 estimation on real data)}
+(default: 10000, calibrated from K=3 estimation on real data)}
 
-\item{early_stop_max_evals}{Maximum evaluations per start (default: 50000)}
+\item{early_stop_max_evals}{Maximum evaluations per start (default: 60000)}
 
 \item{parallel}{Enable parallel processing for multiple starts (default: TRUE)}
 
@@ -70,10 +70,10 @@ the original simulation.R implementation when diag_probs=TRUE.
 # Estimate model with diagonal probabilities (original style)
 y <- rnorm(200)
 result_diag <- estimate_constant_model(y, K=2, diag_probs=TRUE, n_starts=3,
-                                       B=20, C=10)
+                                       n_burnin=20, n_cutoff=10)
 
 # Estimate model with off-diagonal probabilities (new style)
 result_offdiag <- estimate_constant_model(y, K=2, diag_probs=FALSE, n_starts=3,
-                                          B=20, C=10)
+                                          n_burnin=20, n_cutoff=10)
 }
 }

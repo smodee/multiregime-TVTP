@@ -36,9 +36,10 @@ proper statistical properties. Since the matrix is singular by design
 (as noted in Bazzi et al.), we compute a scalar measure that captures
 the overall information content.
 
-The integration uses the softmax score formula:
-\deqn{I = \int \sum_{i,j} s_{ij}(y)^2 \cdot \phi(y; \mu, \sigma^2) \, dy}
-where \eqn{s_{ij} = X_{t-1,i} \cdot P_{ij} \cdot (\eta_j - \text{row\_lik}_i) / \text{tot\_lik}}.
+The integration follows the original 2-regime implementation:
+I = integral \code{(d1-d2)^2/den} * phi(y; mu_quad, sigma_quad^2) dy
+
+where d1, d2 are regime densities and den is the total density.
 }
 \examples{
 \dontrun{
@@ -50,7 +51,7 @@ K <- 3
 mu <- c(-1, 0, 1)
 sigma2 <- c(0.5, 1, 1.5)
 X_t_prev <- c(0.3, 0.4, 0.3)
-p_trans <- rep(0, 6)  # Softmax parameters (0 = equal probs)
+p_trans <- rep(0.2, 6)
 
 fisher_info <- calculate_fisher_information(mu, sigma2, X_t_prev, p_trans, gh_setup, K)
 }
