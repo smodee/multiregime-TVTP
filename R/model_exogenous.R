@@ -175,7 +175,8 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 #' y <- rnorm(200)
 #' loglik <- Rfiltering_TVPXExo(par_diag, X_Exo, y, n_burnin=20, n_cutoff=10)
 #' @export
-Rfiltering_TVPXExo <- function(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE) {
+Rfiltering_TVPXExo <- function(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE,
+                               use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)) {
 
   # Only validate if diagnostics are enabled (performance optimization)
   if (diagnostics) {
@@ -195,6 +196,11 @@ Rfiltering_TVPXExo <- function(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = 
   # Handle equal variances: expand single variance to K variances for filtering
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
+  }
+
+  # C++ fast path (NLL only, no diagnostics)
+  if (!diagnostics && use_cpp && cpp_available()) {
+    return(Cfiltering_Exo(mu, sigma2, init_trans, A, y, X_Exo, n_burnin, n_cutoff, diag_probs))
   }
 
   # Determine length of the time series

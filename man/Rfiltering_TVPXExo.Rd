@@ -4,7 +4,15 @@
 \alias{Rfiltering_TVPXExo}
 \title{Filter observed data through the exogenous variable-driven regime-switching model}
 \usage{
-Rfiltering_TVPXExo(par, X_Exo, y, n_burnin, n_cutoff, diagnostics = FALSE)
+Rfiltering_TVPXExo(
+  par,
+  X_Exo,
+  y,
+  n_burnin,
+  n_cutoff,
+  diagnostics = FALSE,
+  use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)
+)
 }
 \arguments{
 \item{par}{Parameter vector with attributes (mu, sigma2, init_trans, A)}

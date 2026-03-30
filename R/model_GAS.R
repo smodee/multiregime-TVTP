@@ -265,29 +265,45 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' loglik <- Rfiltering_GAS(par_diag, y, 20, 10)
 #' @export
 Rfiltering_GAS <- function(par, y, n_burnin, n_cutoff, n_nodes = 30, scaling_method = NULL,
-                           use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE) {
-  
+                           use_fallback = TRUE, A_threshold = 1e-4, diagnostics = FALSE, verbose = FALSE,
+                           use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)) {
+
   # Only validate if diagnostics are enabled (performance optimization)
   if (diagnostics) {
     validate_parameter_attributes(par)
   }
-  
+
   K <- attr(par, "K")
   diag_probs <- attr(par, "diag_probs")
   equal_variances <- attr(par, "equal_variances")
-  
+
   # Extract parameter components using attribute-based extraction
   mu <- extract_parameter_component(par, "mu")
   sigma2 <- extract_parameter_component(par, "sigma2")
   init_trans <- extract_parameter_component(par, "trans_prob")
   A <- extract_parameter_component(par, "A")
   B <- extract_parameter_component(par, "B")
-  
+
   # Handle equal variances: expand single variance to K variances for filtering
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
   }
-  
+
+  # C fast path (NLL only, no diagnostics, default settings)
+  if (!diagnostics && !verbose && use_fallback && use_cpp && cpp_available() && is.null(scaling_method)) {
+    # Setup Gauss-Hermite quadrature in R (uses statmod + random sampling)
+    regime_sample <- c(rnorm(500, mu[1], sqrt(sigma2[1])),
+                       rnorm(500, mu[K], sqrt(sigma2[K])))
+    sample_median <- median(regime_sample)
+    sample_sd <- sd(regime_sample)
+    GQ <- statmod::gauss.quad.prob(n_nodes, "normal", mu = sample_median, sigma = sample_sd)
+
+    return(Cfiltering_GAS(mu, sigma2, init_trans, A, B, y,
+                          n_burnin, n_cutoff, diag_probs,
+                          GQ$nodes, GQ$weights, sample_median, sample_sd,
+                          use_fallback, A_threshold))
+  }
+
   # Check fallback condition if enabled
   if (use_fallback) {
     max_A <- max(abs(A))
