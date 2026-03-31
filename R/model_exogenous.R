@@ -155,6 +155,9 @@ dataTVPXExoCD <- function(M, N, par, X_Exo, burn_in = 100) {
 #' @param n_burnin Burn-in to be excluded at the beginning of the time series
 #' @param n_cutoff Cut-off to be excluded at the end of the time series
 #' @param diagnostics If TRUE, include detailed diagnostic information (default: TRUE)
+#' @param use_cpp Logical: use compiled C backend if available (default:
+#'   \code{getOption("multiregimeTVTP.use_cpp", TRUE)}). Set to \code{FALSE}
+#'   to force pure-R execution (e.g. for debugging). See \code{\link{cpp_available}}.
 #' @return Negative log-likelihood of observed data under the model
 #' @details
 #' Automatically reads configuration (diagonal vs off-diagonal, equal variances)

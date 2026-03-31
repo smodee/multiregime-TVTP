@@ -215,7 +215,14 @@ plot_gas_simulation_results(results, output_file = "results/gas_plots.pdf")
 - Variance parameters are log-transformed during optimization
 
 ### Computational Efficiency
-- Parallel processing for multi-start optimization
+- **C backend**: The four filtering functions (`Rfiltering_Const`, `Rfiltering_TVP`,
+  `Rfiltering_TVPXExo`, `Rfiltering_GAS`) are accelerated by a compiled C library
+  (10–56× speedup per NLL call vs pure R, with the largest gains for TVP and GAS).
+  The backend is used automatically when available.
+  - Check availability: `cpp_available()`
+  - Disable globally: `options(multiregimeTVTP.use_cpp = FALSE)`
+  - Disable per-call: pass `use_cpp = FALSE` to any `Rfiltering_*` function
+- Parallel processing for multi-start optimization via `future`/`future.apply`
 - Vectorized operations where possible
 - Efficient matrix operations for transition calculations
 

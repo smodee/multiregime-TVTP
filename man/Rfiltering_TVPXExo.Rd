@@ -26,6 +26,10 @@ Rfiltering_TVPXExo(
 \item{n_cutoff}{Cut-off to be excluded at the end of the time series}
 
 \item{diagnostics}{If TRUE, include detailed diagnostic information (default: TRUE)}
+
+\item{use_cpp}{Logical: use compiled C backend if available (default:
+\code{getOption("multiregimeTVTP.use_cpp", TRUE)}). Set to \code{FALSE}
+to force pure-R execution (e.g. for debugging). See \code{\link{cpp_available}}.}
 }
 \value{
 Negative log-likelihood of observed data under the model
