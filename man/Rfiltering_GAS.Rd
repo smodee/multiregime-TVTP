@@ -14,7 +14,8 @@ Rfiltering_GAS(
   use_fallback = TRUE,
   A_threshold = 1e-04,
   diagnostics = FALSE,
-  verbose = FALSE
+  verbose = FALSE,
+  use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)
 )
 }
 \arguments{

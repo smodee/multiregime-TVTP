@@ -173,7 +173,8 @@ dataTVPCD <- function(M, N, par, burn_in = 100) {
 #' y <- rnorm(200)
 #' loglik <- Rfiltering_TVP(par_diag, y, n_burnin=20, n_cutoff=10)
 #' @export
-Rfiltering_TVP <- function(par, y, n_burnin, n_cutoff, diagnostics = FALSE) {
+Rfiltering_TVP <- function(par, y, n_burnin, n_cutoff, diagnostics = FALSE,
+                           use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)) {
 
   # Only validate if diagnostics are enabled (performance optimization)
   if (diagnostics) {
@@ -193,6 +194,11 @@ Rfiltering_TVP <- function(par, y, n_burnin, n_cutoff, diagnostics = FALSE) {
   # Handle equal variances: expand single variance to K variances for filtering
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
+  }
+
+  # C++ fast path (NLL only, no diagnostics)
+  if (!diagnostics && use_cpp && cpp_available()) {
+    return(Cfiltering_TVP(mu, sigma2, init_trans, A, y, n_burnin, n_cutoff, diag_probs))
   }
 
   # Determine length of the time series

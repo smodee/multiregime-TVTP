@@ -137,27 +137,33 @@ dataConstCD <- function(M, N, par, burn_in = 100) {
 #' y <- rnorm(200)
 #' loglik <- Rfiltering_Const(par_diag, y, n_burnin = 20, n_cutoff = 10)
 #' @export
-Rfiltering_Const <- function(par, y, n_burnin, n_cutoff, diagnostics = FALSE) {
-  
+Rfiltering_Const <- function(par, y, n_burnin, n_cutoff, diagnostics = FALSE,
+                             use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)) {
+
   # Validate parameter vector and extract configuration
   if (diagnostics) {
     validate_parameter_attributes(par)
   }
-  
+
   K <- attr(par, "K")
   diag_probs <- attr(par, "diag_probs")
   equal_variances <- attr(par, "equal_variances")
-  
+
   # Extract parameter components using attribute-based extraction
   mu <- extract_parameter_component(par, "mu")
   sigma2 <- extract_parameter_component(par, "sigma2")
   trans_prob <- extract_parameter_component(par, "trans_prob")
-  
+
   # Handle equal variances: expand single variance to K variances for filtering
   if (equal_variances && length(sigma2) == 1) {
     sigma2 <- rep(sigma2, K)
   }
-  
+
+  # C++ fast path (NLL only, no diagnostics)
+  if (!diagnostics && use_cpp && cpp_available()) {
+    return(Cfiltering_Const(mu, sigma2, trans_prob, y, n_burnin, n_cutoff, diag_probs))
+  }
+
   # Determine length of the time series
   M <- length(y)
   

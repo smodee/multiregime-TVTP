@@ -4,7 +4,14 @@
 \alias{Rfiltering_Const}
 \title{Filter observed data through the constant transition probability regime-switching model}
 \usage{
-Rfiltering_Const(par, y, n_burnin, n_cutoff, diagnostics = FALSE)
+Rfiltering_Const(
+  par,
+  y,
+  n_burnin,
+  n_cutoff,
+  diagnostics = FALSE,
+  use_cpp = getOption("multiregimeTVTP.use_cpp", TRUE)
+)
 }
 \arguments{
 \item{par}{Parameter vector with attributes (mu, sigma2, trans_prob)}
