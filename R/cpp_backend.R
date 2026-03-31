@@ -1,6 +1,17 @@
-#' Check if C filtering backend is available
+#' Check if the compiled C filtering backend is available
 #'
-#' @return Logical scalar: TRUE if C backend is available, FALSE otherwise.
+#' Returns \code{TRUE} when the package was installed with its compiled C
+#' library (the normal case). Returns \code{FALSE} when the package is loaded
+#' from source without compilation (e.g. \code{devtools::load_all()} on a
+#' machine without a C toolchain, or when the shared library failed to load).
+#'
+#' The four \code{Rfiltering_*} functions check this automatically and fall
+#' back to pure-R implementations when \code{FALSE}. You can also disable the
+#' C backend globally with \code{options(multiregimeTVTP.use_cpp = FALSE)}.
+#'
+#' @return Logical scalar: \code{TRUE} if C backend is available.
+#' @seealso \code{\link{Rfiltering_Const}}, \code{\link{Rfiltering_TVP}},
+#'   \code{\link{Rfiltering_TVPXExo}}, \code{\link{Rfiltering_GAS}}
 #' @export
 cpp_available <- function() {
   is.loaded("C_filtering_Const", PACKAGE = "multiregimeTVTP")

@@ -243,6 +243,9 @@ dataGASCD <- function(M, N, par, burn_in = 100, n_nodes = 30,
 #' @param A_threshold Threshold below which to use constant model fallback (default: 1e-4)
 #' @param diagnostics If TRUE, include detailed diagnostic information (default: FALSE)
 #' @param verbose Whether to report fallback usage (default: FALSE)
+#' @param use_cpp Logical: use compiled C backend if available (default:
+#'   \code{getOption("multiregimeTVTP.use_cpp", TRUE)}). Set to \code{FALSE}
+#'   to force pure-R execution (e.g. for debugging). See \code{\link{cpp_available}}.
 #' @return Negative log-likelihood of observed data under the model
 #' @details
 #' Automatically reads configuration (diagonal vs off-diagonal, equal variances)

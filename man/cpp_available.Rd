@@ -2,13 +2,25 @@
 % Please edit documentation in R/cpp_backend.R
 \name{cpp_available}
 \alias{cpp_available}
-\title{Check if C filtering backend is available}
+\title{Check if the compiled C filtering backend is available}
 \usage{
 cpp_available()
 }
 \value{
-Logical scalar: TRUE if C backend is available, FALSE otherwise.
+Logical scalar: \code{TRUE} if C backend is available.
 }
 \description{
-Check if C filtering backend is available
+Returns \code{TRUE} when the package was installed with its compiled C
+library (the normal case). Returns \code{FALSE} when the package is loaded
+from source without compilation (e.g. \code{devtools::load_all()} on a
+machine without a C toolchain, or when the shared library failed to load).
+}
+\details{
+The four \code{Rfiltering_*} functions check this automatically and fall
+back to pure-R implementations when \code{FALSE}. You can also disable the
+C backend globally with \code{options(multiregimeTVTP.use_cpp = FALSE)}.
+}
+\seealso{
+\code{\link{Rfiltering_Const}}, \code{\link{Rfiltering_TVP}},
+\code{\link{Rfiltering_TVPXExo}}, \code{\link{Rfiltering_GAS}}
 }
