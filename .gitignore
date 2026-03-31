@@ -62,5 +62,10 @@ results/
 # Legacy reference implementation (development only)
 legacy/
 
+# Compiled C artifacts
+src/*.o
+src/*.dll
+src/*.so
+
 # Development/diagnostic tests (not needed for released package)
 tests/diagnostics/
