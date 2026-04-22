@@ -294,4 +294,10 @@ For questions, issues, or contributions, please open an issue on GitHub.
 
 ## Acknowledgments
 
-This implementation incorporates ideas from Bazzi et al. (2017) for score-driven dynamics.
+- **Yushu Li** (co-supervisor, <yushu.li@uib.no>) — wrote the initial
+  2-regime R implementation of the data-simulation, filtering, and
+  estimation functions for the TVP, exogenous-driven, and GAS models,
+  translating the filtering/estimation routines from C in the HMMGAS
+  package. This package extends her 2-regime code to arbitrary K.
+- Bazzi et al. (2017) — score-driven (GAS) methodology and the reference
+  HMMGAS implementation.
